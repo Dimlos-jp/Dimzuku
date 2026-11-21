@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="repo_slug" translatable="false">Dimlos-jp/Shizuku</string>
-    <string name="help_url" translatable="false">https://github.com/Dimlos-jp/Shizuku#readme</string>
+    <string name="repo_slug" translatable="false">Dimlos-jp/Dimzuku</string>
+    <string name="help_url" translatable="false">https://github.com/Dimlos-jp/Dimzuku#readme</string>
 </resources>
