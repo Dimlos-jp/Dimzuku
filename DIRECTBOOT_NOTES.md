@@ -16,7 +16,7 @@ device allows it, and as soon as possible after unlock otherwise.
   2. Root launch mode: run the starter through `su`.
   3. ADB launch mode with a fixed TCP port: connect over loopback, no Wi-Fi or mDNS needed.
   4. ADB launch mode with wireless debugging: wait for Wi-Fi, toggle `adb_wifi_enabled`
-     0 → 1, discover the port via mDNS, retry up to 4 times.
+     0 → 1, find the port (AdbPortScanner and mDNS, whichever answers first), retry a few times.
   5. Before unlock, finish as soon as the start command is sent (the binder can only be
      delivered after unlock). After unlock, wait for the binder.
   - If a run is still in progress when the next boot broadcast arrives, the new request is
@@ -24,7 +24,7 @@ device allows it, and as soon as possible after unlock otherwise.
   - If an attempt fails after unlock, it hands over to the normal `AdbStartWorker` path,
     which retries with backoff and shows the "Attempt now" notification.
 - The app's settings and adb key live in device-encrypted storage, so all of this can read
-  them before unlock. That move alone cut boot start time from roughly 30 s to about 10 s.
+  them before unlock.
 
 ## Log file
 
@@ -72,7 +72,7 @@ Other notes:
 
 ## Timing log and experiment flags
 
-Every run now writes `T+<ms>` timeline marks, each with `boot+<ms>`, `adb_enabled`,
+Every run writes `T+<ms>` timeline marks, each with `boot+<ms>`, `adb_enabled`,
 `adb_wifi_enabled`, `init.svc.adbd` and the `service.adb.tcp.port` property. The receiver logs `processAge`, which tells
 "slow broadcast delivery" apart from "slow start in our own code".
 
@@ -104,6 +104,10 @@ with an adb CNXN packet (adbd answers STLS). It needs no permission. mDNS stays 
 fallback; whichever reports a port first wins. A failed mDNS registration no longer costs a
 re-toggle.
 
+In about one run in three, the first toggle produces no listener at all (0 open ports for 1.4 s);
+the re-toggle then fixes it and costs about 1.5-2 s. Waiting longer than 1.4 s would not help:
+in the logs the port never showed up on its own between 1.4 s and 2 s.
+
 ## Results (Pixel 7, Android 14, boot to "start command finished")
 
 | Version | boot + | Notes |
@@ -112,8 +116,9 @@ re-toggle.
 | staged discovery, settle 1000 ms | 22.0 s | |
 | staged discovery, settle 500 ms | 21.6 s | first toggle fails (mDNS -65563) |
 | + port scan, settle 500 ms | 19.6 s | first attempt succeeds |
-| + port scan, settle 0 | **18.65 s** (2 runs: 18.69 / 18.65) | Wi-Fi is up at ~17.6 s |
+| + port scan, settle 0 | **18.65 s** (best), typically 18.7-19.7 s | Wi-Fi is up at ~17.6 s |
+| same, first toggle fails | 20.1-21.9 s | re-toggle needed |
 
 Wi-Fi becoming usable (~T+3.4 s after the service starts, ~boot+17.6 s) is the floor; the
-remaining ~1 s is port scan (~0.4-0.5 s), TLS connect, tcpip restart and the starter. The server
+remaining ~1 s is the wait for adbd's port (0.4-1.3 s), TLS connect, tcpip restart and the starter. The server
 was alive (`binder alive`) after every unlock.
