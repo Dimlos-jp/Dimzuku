@@ -29,11 +29,15 @@ import moe.shizuku.manager.utils.ShizukuStateMachine
  * @param setAdbEnabled when false, do not run `settings put global adb_enabled 1` in the shell.
  * @param tcpipAfterStart in TCP mode, start the server on the first connection and only then
  *        send `tcpip:`, instead of restarting adbd first.
+ * @param reconnectIntervalMs when > 0, the reconnect after `tcpip:` retries at this fixed interval
+ *        (up to [reconnectAttempts]) instead of the growing 0/1/2/3/4 s waits.
  */
 class AdbStartOptions(
     val preparedKey: AdbKey? = null,
     val setAdbEnabled: Boolean = true,
     val tcpipAfterStart: Boolean = false,
+    val reconnectIntervalMs: Long = 0L,
+    val reconnectAttempts: Int = 5,
 )
 
 object AdbStarter {
@@ -98,7 +102,7 @@ object AdbStarter {
                 log?.invoke("Connecting on port $activePort...")
 
                 AdbClient("127.0.0.1", activePort, key).use { client ->
-                    connectWithRetry(client)
+                    connectWithRetry(client, options.reconnectIntervalMs, options.reconnectAttempts)
                     log?.invoke("Successfully connected on port $activePort...\n")
                     // Enable USB debugging in the same shell that starts the server. This runs
                     // as the shell UID, which holds WRITE_SECURE_SETTINGS, so it works on a fresh
@@ -147,9 +151,8 @@ object AdbStarter {
         }
     }
 
-    private suspend fun connectWithRetry(client: AdbClient) {
+    private suspend fun connectWithRetry(client: AdbClient, intervalMs: Long = 0L, maxAttempts: Int = 5) {
         var delayTime = 0L
-        val maxAttempts = 5
         for (attempt in 1..maxAttempts) {
             try {
                 delay(delayTime)
@@ -161,7 +164,7 @@ object AdbStarter {
                     e is CancellationException ||
                     e is SocketTimeoutException
                 ) throw e
-                delayTime += 1000
+                delayTime = if (intervalMs > 0) intervalMs else delayTime + 1000
             }
         }
     }

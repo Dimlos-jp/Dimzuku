@@ -23,6 +23,11 @@ import java.io.File
  *   staged_discovery=1     Start mDNS discovery once, before the first toggle, keep it running
  *                          across attempts, and use short staged timeouts instead of 15 s x 4.
  *   wifi_settle_ms=500     Extra wait after Wi-Fi has an IP address (the old fixed value was 1500).
+ *                          Measured on a Pixel 7: 500 made the FIRST toggle fail, try 1000-1500.
+ *   discover_window_ms=2000  staged_discovery: how long to wait for the port after a toggle before
+ *                          re-toggling. A successful toggle published the port after ~1.05 s.
+ *   fast_reconnect=1       After `tcpip:` restarts adbd, poll the reconnect every 200 ms instead of
+ *                          the old 0 / 1 / 2 / 3 / 4 s growing waits.
  *   skip_adb_enabled=0     Do NOT write adb_enabled=1 (neither from the app nor in the adb shell).
  *                          EXPERIMENT: check that the server still survives, see verify log.
  *   tcpip_after_start=0    In TCP mode, run the starter first and send `tcpip:` afterwards.
@@ -40,6 +45,8 @@ object BootFlags {
         "fast_toggle" to "1",
         "staged_discovery" to "1",
         "wifi_settle_ms" to "500",
+        "discover_window_ms" to "2000",
+        "fast_reconnect" to "1",
         "skip_adb_enabled" to "0",
         "tcpip_after_start" to "0",
         "use_tls_port_prop" to "0",

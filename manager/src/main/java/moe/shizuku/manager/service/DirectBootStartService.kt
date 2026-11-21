@@ -113,7 +113,12 @@ class DirectBootStartService : Service() {
 
         // staged_discovery: one mDNS discovery for the whole run, with short per-attempt waits
         // (instead of MAX_ATTEMPTS x DISCOVER_TIMEOUT_MS). A failed first toggle costs 4 s, not 15 s.
-        private val STAGED_TIMEOUTS_MS = listOf(4_000L, 4_000L, 6_000L, 10_000L)
+        // The first value comes from the discover_window_ms flag (default 2 s): a toggle that works
+        // publishes the port after ~1 s, so a longer wait only delays the retry of a failed toggle.
+        private fun stagedTimeoutsMs(): List<Long> {
+            val w = BootFlags.int("discover_window_ms").toLong().coerceAtLeast(500L)
+            return listOf(w, w, w + w / 2, w * 3, 10_000L)
+        }
 
         // fast_toggle: gap between writing 0 and 1 when a retry has to re-toggle (the old code
         // always waited 500 ms, even on the first attempt where the value was already 0).
@@ -265,6 +270,8 @@ class DirectBootStartService : Service() {
                 preparedKey = keyDeferred?.await(),
                 setAdbEnabled = !skipAdbEnabled,
                 tcpipAfterStart = BootFlags.bool("tcpip_after_start"),
+                reconnectIntervalMs = if (BootFlags.bool("fast_reconnect")) 200L else 0L,
+                reconnectAttempts = if (BootFlags.bool("fast_reconnect")) 25 else 5,
             )
             mark("ADB: connecting on port $port (preparedKey=${options.preparedKey != null})")
             AdbStarter.startAdb(applicationContext, port, log = { line -> log("adb> ${line.trimEnd()}") }, options = options)
@@ -343,8 +350,11 @@ class DirectBootStartService : Service() {
             Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
             delay(500)
         } else if (Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
+            log("toggle: adb_wifi_enabled is still 1 (framework did not reset it), writing 0 then 1")
             Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
             delay(RETOGGLE_GAP_MS)
+        } else {
+            log("toggle: adb_wifi_enabled is 0, writing 1")
         }
         Settings.Global.putInt(cr, "adb_wifi_enabled", 1)
     }
@@ -387,10 +397,11 @@ class DirectBootStartService : Service() {
         mdns.start()
         mark("ADB: mDNS discovery started before the toggle")
         try {
-            for ((i, timeoutMs) in STAGED_TIMEOUTS_MS.withIndex()) {
+            val stages = stagedTimeoutsMs()
+            for ((i, timeoutMs) in stages.withIndex()) {
                 found.tryReceive() // drop a stale port from before this toggle
                 toggleWifiAdb(cr, fast)
-                mark("ADB: adb_wifi_enabled=1 (attempt ${i + 1}/${STAGED_TIMEOUTS_MS.size}), waiting ${timeoutMs}ms")
+                mark("ADB: adb_wifi_enabled=1 (attempt ${i + 1}/${stages.size}), waiting ${timeoutMs}ms")
                 val port = withTimeoutOrNull(timeoutMs) { awaitPort(found, usePortProp) }
                 if (port != null) {
                     mark("ADB: port $port found on attempt ${i + 1}")
@@ -401,7 +412,7 @@ class DirectBootStartService : Service() {
         } finally {
             mdns.stop()
         }
-        throw IllegalStateException("adb wireless port not discovered after ${STAGED_TIMEOUTS_MS.size} staged attempts")
+        throw IllegalStateException("adb wireless port not discovered after ${stagedTimeoutsMs().size} staged attempts")
     }
 
     private suspend fun awaitPort(found: Channel<Int>, usePortProp: Boolean): Int {
