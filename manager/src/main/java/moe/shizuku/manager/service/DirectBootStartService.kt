@@ -315,11 +315,29 @@ class DirectBootStartService : Service() {
      * Retries a few times, because the framework only evaluates the setting at the moment it
      * changes.
      *
-     * Behaviour is switched by BootFlags: fast_toggle, staged_discovery, wifi_settle_ms,
-     * use_tls_port_prop (see BootFlags for what each one does).
+     * Behaviour is switched by BootFlags: fast_toggle, staged_discovery, early_mdns,
+     * wifi_settle_ms (see BootFlags for what each one does).
      */
     private suspend fun enableWifiDebuggingAndDiscoverPort(cr: ContentResolver): Int {
         val fast = BootFlags.bool("fast_toggle")
+        val staged = BootFlags.bool("staged_discovery")
+
+        val found = Channel<Int>(Channel.CONFLATED)
+        fun newMdns() = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
+            if (p.second > 0) {
+                log("mDNS found host=${p.first} port=${p.second}")
+                found.trySend(p.second)
+            }
+        }.also { it.debug = { msg -> log(msg) } }
+
+        // early_mdns: the first NsdManager request is what starts the mDNS daemon (mdnsd). If adbd
+        // registers its service before mdnsd is up, the registration fails (error -65563) and the
+        // service can never be discovered. So start the discovery now, while we still wait for Wi-Fi.
+        var early: AdbMdns? = null
+        if (staged && BootFlags.bool("early_mdns")) {
+            early = newMdns().also { it.start() }
+            mark("ADB: mDNS discovery started EARLY (before Wi-Fi)")
+        }
 
         // A leftover 1 would make the later 1-write a no-op for the observer. Reset it now,
         // while we wait for Wi-Fi, instead of paying a fixed gap after Wi-Fi is up.
@@ -333,8 +351,8 @@ class DirectBootStartService : Service() {
         val settleMs = if (fast) BootFlags.int("wifi_settle_ms").toLong() else WIFI_SETTLE_MS
         if (wifiUp && settleMs > 0) delay(settleMs)
 
-        return if (BootFlags.bool("staged_discovery")) {
-            discoverStaged(cr, fast)
+        return if (staged) {
+            discoverStaged(cr, fast, found, early, ::newMdns)
         } else {
             discoverLegacy(cr, fast, wifiUp)
         }
@@ -378,32 +396,28 @@ class DirectBootStartService : Service() {
     }
 
     /**
-     * staged_discovery: start mDNS discovery once, BEFORE the first toggle, so the record is
-     * caught the moment adbd publishes it, and keep it running across attempts. Each attempt waits
-     * only STAGED_TIMEOUTS_MS[i] before re-toggling.
-     *
-     * The service.adb.tls.port property is polled alongside. It is always logged when it first
-     * becomes readable; it is only USED if use_tls_port_prop=1 (it may be unreadable for apps).
+     * staged_discovery: one mDNS discovery for the whole run, started [existing] (early) or right
+     * here, and kept running across attempts. Each attempt waits only the staged timeout before
+     * re-toggling. A re-toggle is also the only cure when adbd's mDNS registration failed.
      */
-    private suspend fun discoverStaged(cr: ContentResolver, fast: Boolean): Int {
-        val found = Channel<Int>(Channel.CONFLATED)
-        val usePortProp = BootFlags.bool("use_tls_port_prop")
-        fun newMdns() = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
-            if (p.second > 0) {
-                log("mDNS found host=${p.first} port=${p.second}")
-                found.trySend(p.second)
-            }
-        }.also { it.debug = { msg -> log(msg) } }
-        var mdns = newMdns()
-        mdns.start()
-        mark("ADB: mDNS discovery started before the toggle")
+    private suspend fun discoverStaged(
+        cr: ContentResolver,
+        fast: Boolean,
+        found: Channel<Int>,
+        existing: AdbMdns?,
+        newMdns: () -> AdbMdns,
+    ): Int {
+        var mdns = existing ?: newMdns().also {
+            it.start()
+            mark("ADB: mDNS discovery started before the toggle (not early)")
+        }
         try {
             val stages = stagedTimeoutsMs()
             for ((i, timeoutMs) in stages.withIndex()) {
                 found.tryReceive() // drop a stale port from before this toggle
                 toggleWifiAdb(cr, fast)
                 mark("ADB: adb_wifi_enabled=1 (attempt ${i + 1}/${stages.size}), waiting ${timeoutMs}ms")
-                val port = withTimeoutOrNull(timeoutMs) { awaitPort(found, usePortProp) }
+                val port = withTimeoutOrNull(timeoutMs) { found.receive() }
                 if (port != null) {
                     mark("ADB: port $port found on attempt ${i + 1}")
                     return port
@@ -419,7 +433,7 @@ class DirectBootStartService : Service() {
                     mdns = newMdns()
                     mdns.start()
                     val again = withTimeoutOrNull(BootFlags.int("rediscover_wait_ms").toLong()) {
-                        awaitPort(found, usePortProp)
+                        found.receive()
                     }
                     if (again != null) {
                         mark("ADB: port $again found after restarting the discovery (attempt ${i + 1})")
@@ -431,22 +445,6 @@ class DirectBootStartService : Service() {
             mdns.stop()
         }
         throw IllegalStateException("adb wireless port not discovered after ${stagedTimeoutsMs().size} staged attempts")
-    }
-
-    private suspend fun awaitPort(found: Channel<Int>, usePortProp: Boolean): Int {
-        var propLogged = false
-        while (true) {
-            found.tryReceive().getOrNull()?.let { return it }
-            val p = BootLog.tlsPortProp()
-            if (p > 0) {
-                if (!propLogged) {
-                    propLogged = true
-                    mark("service.adb.tls.port property is readable: $p (used=$usePortProp)")
-                }
-                if (usePortProp) return p
-            }
-            delay(50)
-        }
     }
 
     /**

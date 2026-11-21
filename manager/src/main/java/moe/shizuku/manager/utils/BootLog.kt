@@ -56,12 +56,8 @@ object BootLog {
                 " adb_enabled=${g("adb_enabled")}" +
                 " adb_wifi_enabled=${g("adb_wifi_enabled")}" +
                 " init.svc.adbd='${prop("init.svc.adbd")}'" +
-                " tls_port='${prop("service.adb.tls.port")}'" +
                 " tcp_port='${prop("service.adb.tcp.port")}'"
     }
-
-    /** Current value of service.adb.tls.port, or -1 if empty / unreadable / not a number. */
-    fun tlsPortProp(): Int = prop("service.adb.tls.port").toIntOrNull()?.takeIf { it > 0 } ?: -1
 
     /** Value of init.svc.adbd ("running", "stopped", "" if unreadable). */
     fun adbdState(): String = prop("init.svc.adbd")
