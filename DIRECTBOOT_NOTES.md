@@ -73,8 +73,7 @@ Other notes:
 ## Timing log and experiment flags
 
 Every run now writes `T+<ms>` timeline marks, each with `boot+<ms>`, `adb_enabled`,
-`adb_wifi_enabled`, `init.svc.adbd` and the `service.adb.tls.port` / `service.adb.tcp.port`
-properties (empty means the app may not read it). The receiver logs `processAge`, which tells
+`adb_wifi_enabled`, `init.svc.adbd` and the `service.adb.tcp.port` property. The receiver logs `processAge`, which tells
 "slow broadcast delivery" apart from "slow start in our own code".
 
 Behaviour is switched by `boot_experiment_flags.txt` in the same device-encrypted `files/`
@@ -86,13 +85,35 @@ BOOT_COMPLETED run logs `server already running` if the binder is alive after un
 with `init.svc.adbd` these show whether the server survives `adb_wifi_enabled=0`, adbd stopping
 (`skip_adb_enabled=1`) and adbd restarting (`tcpip_after_start=1`).
 
-### Port sources without mDNS (patch 5)
+## Finding the wireless-debugging port (AdbPortScanner)
 
-Boot logs showed that adbd's mDNS registration can fail on the first toggle (error -65563,
-mdnsd not running) and that starting our own discovery early does not start mdnsd on Android 14
-(discovery runs in system_server's Java MdnsDiscoveryManager). adbd still listens on its TLS port
-and logs `adbwifi started on port N`, so the port is taken from there, or found by scanning:
+Measured on a Pixel 7 (Android 14), with logcat of adbd and system_server:
 
-- `port_logcat=1`: needs `adb shell pm grant <applicationId> android.permission.READ_LOGS` once.
-- `port_scan=1`: probes 127.0.0.1:32768-60999 for an adbd (CNXN -> STLS). No permission needed.
-- mDNS stays as the fallback; the first source that reports a port wins.
+- After `adb_wifi_enabled=1`, adbd logs `adbwifi started on port N` within ~5-20 ms.
+- Its mDNS registration is racy: on some boots it fails with error -65563
+  (`kDNSServiceErr_ServiceNotRunning`, mdnsd not running), so the service is never discoverable
+  until the next toggle. Starting our own NsdManager discovery early does not fix it: on
+  Android 14 discovery runs in system_server (`MdnsDiscoveryManager`) and does not start mdnsd.
+  Even when registration succeeds, discovery sees the service only ~0.9 s later.
+- `service.adb.tls.port` can't be read by an app (SELinux denial, `adbd_prop`).
+- logcat of other processes is not usable before unlock: even with `READ_LOGS` granted the
+  reader got no adbd line (Android asks for log-access consent).
+
+So `AdbPortScanner` connects to every port in 32768-60999 on loopback and probes the open ones
+with an adb CNXN packet (adbd answers STLS). It needs no permission. mDNS stays running as a
+fallback; whichever reports a port first wins. A failed mDNS registration no longer costs a
+re-toggle.
+
+## Results (Pixel 7, Android 14, boot to "start command finished")
+
+| Version | boot + | Notes |
+|---|---|---|
+| original (4 x 15 s discovery windows) | 25.1 s | first toggle fails -> 2nd attempt |
+| staged discovery, settle 1000 ms | 22.0 s | |
+| staged discovery, settle 500 ms | 21.6 s | first toggle fails (mDNS -65563) |
+| + port scan, settle 500 ms | 19.6 s | first attempt succeeds |
+| + port scan, settle 0 | **18.65 s** (2 runs: 18.69 / 18.65) | Wi-Fi is up at ~17.6 s |
+
+Wi-Fi becoming usable (~T+3.4 s after the service starts, ~boot+17.6 s) is the floor; the
+remaining ~1 s is port scan (~0.4-0.5 s), TLS connect, tcpip restart and the starter. The server
+was alive (`binder alive`) after every unlock.
