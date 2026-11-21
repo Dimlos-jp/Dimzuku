@@ -1,5 +1,6 @@
 package moe.shizuku.manager.service
 
+import android.annotation.SuppressLint
 import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -10,20 +11,25 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.callbackFlow
@@ -34,10 +40,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 import moe.shizuku.manager.R
 import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.ShizukuSettings.LaunchMethod
+import moe.shizuku.manager.adb.AdbKey
 import moe.shizuku.manager.adb.AdbMdns
+import moe.shizuku.manager.adb.AdbStartOptions
 import moe.shizuku.manager.adb.AdbStarter
+import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 import moe.shizuku.manager.receiver.ShizukuReceiverStarter
 import moe.shizuku.manager.starter.Starter
+import moe.shizuku.manager.utils.BootFlags
 import moe.shizuku.manager.utils.BootLog
 import moe.shizuku.manager.utils.EnvironmentUtils
 import moe.shizuku.manager.utils.ShizukuStateMachine
@@ -83,6 +93,9 @@ class DirectBootStartService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var runJob: Job? = null
 
+    // Start of the current run (elapsedRealtime), for the T+ timestamps in the boot log.
+    private var runT0 = 0L
+
     companion object {
         private const val CHANNEL_ID = "BootStart"
         private const val NOTIFICATION_ID = 1449
@@ -97,6 +110,14 @@ class DirectBootStartService : Service() {
         // Per-attempt mDNS discovery window, and how many toggle+discover attempts we make.
         private const val DISCOVER_TIMEOUT_MS = 15_000L
         private const val MAX_ATTEMPTS = 4
+
+        // staged_discovery: one mDNS discovery for the whole run, with short per-attempt waits
+        // (instead of MAX_ATTEMPTS x DISCOVER_TIMEOUT_MS). A failed first toggle costs 4 s, not 15 s.
+        private val STAGED_TIMEOUTS_MS = listOf(4_000L, 4_000L, 6_000L, 10_000L)
+
+        // fast_toggle: gap between writing 0 and 1 when a retry has to re-toggle (the old code
+        // always waited 500 ms, even on the first attempt where the value was already 0).
+        private const val RETOGGLE_GAP_MS = 150L
 
         // After unlock, how long to wait for the binder of an already-running server to arrive
         // before concluding that no server is running. (The binder is delivered via the
@@ -116,6 +137,10 @@ class DirectBootStartService : Service() {
 
     private fun log(msg: String, tr: Throwable? = null) = BootLog.log(this, "[service] $msg", tr)
 
+    /** Timeline marker: ms since this run started + ms since boot + adb switches/properties. */
+    private fun mark(label: String) =
+        log("T+${SystemClock.elapsedRealtime() - runT0}ms $label | ${BootLog.snapshot(this)}")
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -127,8 +152,10 @@ class DirectBootStartService : Service() {
             return START_NOT_STICKY
         }
 
+        runT0 = SystemClock.elapsedRealtime()
         val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         log("==== new run: keyguardLocked=${km.isKeyguardLocked} userUnlocked=${isUserUnlocked()} sdk=${Build.VERSION.SDK_INT}")
+        log("flags: ${BootFlags.reload(this)}")
 
         runJob = scope.launch {
             try {
@@ -144,10 +171,14 @@ class DirectBootStartService : Service() {
     }
 
     private suspend fun runStart() {
+        mark("run start")
+
         // STEP 0: if a previous run already started the server, don't kill and restart it
         // (that caused a ~3s outage a few seconds after unlock). Only checkable after unlock.
         if (isUserUnlocked() && isAlreadyRunning()) {
-            log("server already running (binder alive) - nothing to do")
+            // If the locked-phase run sent the start command, this is the proof that the server
+            // survived everything that happened afterwards (adb_wifi_enabled=0, tcpip, ...).
+            mark("server already running (binder alive) - nothing to do")
             return
         }
 
@@ -163,11 +194,14 @@ class DirectBootStartService : Service() {
         // STEP 3
         if (!isUserUnlocked()) {
             log("start command sent while locked - binder arrives after unlock, the BOOT_COMPLETED run will confirm")
+            // pingBinder cannot work while locked, but init.svc.adbd can still be logged.
+            verifyAfterStart("locked")
             return
         }
         log("waiting for binder (up to 60s)")
         Starter.waitForBinder { line -> log("binder> ${line.trimEnd()}") }
-        log("server is running")
+        mark("server is running")
+        verifyAfterStart("unlocked")
     }
 
     /** STEP 1: root. Same command as ShizukuReceiverStarter.rootStart. */
@@ -202,44 +236,131 @@ class DirectBootStartService : Service() {
             ShizukuReceiverStarter.showPermissionErrorNotification(applicationContext)
             return
         }
-        Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
-        Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
-        log("ADB: adb_enabled=1, tcpPort=$tcpPort tcpMode=${ShizukuSettings.getTcpMode()} wifiRequired=${EnvironmentUtils.isWifiRequired()}")
 
-        val port: Int = if (!EnvironmentUtils.isWifiRequired()) {
-            log("ADB: using fixed TCP port $tcpPort, skipping Wi-Fi and mDNS")
-            tcpPort
+        // prewarm_key: build the AdbKey (Keystore decrypt, certificate, SSLContext) while we wait
+        // for Wi-Fi, so the TLS handshake is the only work left once the port is known.
+        val keyDeferred: Deferred<AdbKey?>? =
+            if (BootFlags.bool("prewarm_key") && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                scope.async { prewarmKey() }
+            else null
+
+        val skipAdbEnabled = BootFlags.bool("skip_adb_enabled")
+        if (skipAdbEnabled) {
+            log("ADB: EXPERIMENT skip_adb_enabled - not writing adb_enabled")
         } else {
-            enableWifiDebuggingAndDiscoverPort(cr)
+            Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
         }
+        Settings.Global.putLong(cr, "adb_allowed_connection_time", 0L)
+        mark("ADB: prepared, tcpPort=$tcpPort tcpMode=${ShizukuSettings.getTcpMode()} wifiRequired=${EnvironmentUtils.isWifiRequired()}")
 
-        log("ADB: connecting on port $port")
-        AdbStarter.startAdb(applicationContext, port) { line -> log("adb> ${line.trimEnd()}") }
+        try {
+            val port: Int = if (!EnvironmentUtils.isWifiRequired()) {
+                log("ADB: using fixed TCP port $tcpPort, skipping Wi-Fi and mDNS")
+                tcpPort
+            } else {
+                enableWifiDebuggingAndDiscoverPort(cr)
+            }
+
+            val options = AdbStartOptions(
+                preparedKey = keyDeferred?.await(),
+                setAdbEnabled = !skipAdbEnabled,
+                tcpipAfterStart = BootFlags.bool("tcpip_after_start"),
+            )
+            mark("ADB: connecting on port $port (preparedKey=${options.preparedKey != null})")
+            AdbStarter.startAdb(applicationContext, port, log = { line -> log("adb> ${line.trimEnd()}") }, options = options)
+            mark("ADB: start command finished")
+        } finally {
+            keyDeferred?.cancel()
+        }
+    }
+
+    /** Builds the key and forces the lazy SSLContext / public key. Returns null on any failure. */
+    @SuppressLint("NewApi") // only called when SDK_INT >= R (AdbKey.sslContext needs it)
+    private fun prewarmKey(): AdbKey? = try {
+        val key = AdbKey(PreferenceAdbKeyStore(ShizukuSettings.getPreferences()), "shizuku")
+        key.sslContext
+        key.adbPublicKey
+        mark("AdbKey prewarmed")
+        key
+    } catch (e: Exception) {
+        // AdbStarter falls back to building the key itself (and reports AdbKeyException).
+        log("AdbKey prewarm failed, will build it later", e)
+        null
+    }
+
+    /**
+     * Survival check, a fixed delay after the start command: is the server still alive, and what
+     * is adbd doing? Compares the cases (adb_enabled written or not, tcpip before or after start).
+     * pingBinder is only meaningful after unlock; while locked, the BOOT_COMPLETED run logs
+     * "server already running" instead, which is the same proof.
+     */
+    private suspend fun verifyAfterStart(phase: String) {
+        val delayMs = BootFlags.int("verify_delay_ms").toLong()
+        if (delayMs <= 0) return
+        delay(delayMs)
+        val unlocked = isUserUnlocked()
+        val ping = if (unlocked) Shizuku.pingBinder().toString() else "n/a (locked)"
+        mark("VERIFY($phase) +${delayMs}ms after start: pingBinder=$ping adbd='${BootLog.adbdState()}'")
     }
 
     /**
      * Wait for Wi-Fi, then toggle adb_wifi_enabled 0 -> 1 and look for the TLS port via mDNS.
      * Retries a few times, because the framework only evaluates the setting at the moment it
      * changes.
+     *
+     * Behaviour is switched by BootFlags: fast_toggle, staged_discovery, wifi_settle_ms,
+     * use_tls_port_prop (see BootFlags for what each one does).
      */
     private suspend fun enableWifiDebuggingAndDiscoverPort(cr: ContentResolver): Int {
-        val wifiUp = awaitWifi(WIFI_WAIT_MS)
-        log("ADB: Wi-Fi available=$wifiUp (waited up to ${WIFI_WAIT_MS / 1000}s)")
-        if (wifiUp) delay(WIFI_SETTLE_MS)
+        val fast = BootFlags.bool("fast_toggle")
 
-        for (attempt in 1..MAX_ATTEMPTS) {
-            // Toggle so the framework sees a real change and re-evaluates the Wi-Fi state.
+        // A leftover 1 would make the later 1-write a no-op for the observer. Reset it now,
+        // while we wait for Wi-Fi, instead of paying a fixed gap after Wi-Fi is up.
+        if (fast && Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
+            Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
+            mark("adb_wifi_enabled was 1, pre-reset to 0")
+        }
+
+        val wifiUp = awaitWifi(WIFI_WAIT_MS, waitForIp = fast)
+        mark("ADB: Wi-Fi available=$wifiUp (waited up to ${WIFI_WAIT_MS / 1000}s)")
+        val settleMs = if (fast) BootFlags.int("wifi_settle_ms").toLong() else WIFI_SETTLE_MS
+        if (wifiUp && settleMs > 0) delay(settleMs)
+
+        return if (BootFlags.bool("staged_discovery")) {
+            discoverStaged(cr, fast)
+        } else {
+            discoverLegacy(cr, fast, wifiUp)
+        }
+    }
+
+    /**
+     * Makes the framework see a real 0 -> 1 change of adb_wifi_enabled.
+     * Legacy: always write 0, wait 500 ms, write 1.
+     * fast: write 0 and wait only if the value is currently 1 (a retry, or a leftover).
+     */
+    private suspend fun toggleWifiAdb(cr: ContentResolver, fast: Boolean) {
+        if (!fast) {
             Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
             delay(500)
-            Settings.Global.putInt(cr, "adb_wifi_enabled", 1)
-            log("ADB: adb_wifi_enabled 0->1 (attempt $attempt/$MAX_ATTEMPTS), mDNS discovery (${DISCOVER_TIMEOUT_MS / 1000}s)")
+        } else if (Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
+            Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
+            delay(RETOGGLE_GAP_MS)
+        }
+        Settings.Global.putInt(cr, "adb_wifi_enabled", 1)
+    }
+
+    /** Original strategy: a new mDNS discovery per attempt, started after the toggle, 15 s each. */
+    private suspend fun discoverLegacy(cr: ContentResolver, fast: Boolean, wifiUp: Boolean): Int {
+        for (attempt in 1..MAX_ATTEMPTS) {
+            toggleWifiAdb(cr, fast)
+            mark("ADB: adb_wifi_enabled 0->1 (attempt $attempt/$MAX_ATTEMPTS), mDNS discovery (${DISCOVER_TIMEOUT_MS / 1000}s)")
             try {
                 return discoverPort(DISCOVER_TIMEOUT_MS)
             } catch (e: TimeoutCancellationException) {
                 log("ADB: mDNS discovery timed out on attempt $attempt")
                 if (!wifiUp) {
                     // Wi-Fi may have come up while we were waiting; give it another chance.
-                    if (awaitWifi(5_000)) delay(WIFI_SETTLE_MS)
+                    if (awaitWifi(5_000, waitForIp = false)) delay(WIFI_SETTLE_MS)
                 }
             }
         }
@@ -247,10 +368,66 @@ class DirectBootStartService : Service() {
     }
 
     /**
+     * staged_discovery: start mDNS discovery once, BEFORE the first toggle, so the record is
+     * caught the moment adbd publishes it, and keep it running across attempts. Each attempt waits
+     * only STAGED_TIMEOUTS_MS[i] before re-toggling.
+     *
+     * The service.adb.tls.port property is polled alongside. It is always logged when it first
+     * becomes readable; it is only USED if use_tls_port_prop=1 (it may be unreadable for apps).
+     */
+    private suspend fun discoverStaged(cr: ContentResolver, fast: Boolean): Int {
+        val found = Channel<Int>(Channel.CONFLATED)
+        val usePortProp = BootFlags.bool("use_tls_port_prop")
+        val mdns = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
+            if (p.second > 0) {
+                log("mDNS found host=${p.first} port=${p.second}")
+                found.trySend(p.second)
+            }
+        }
+        mdns.start()
+        mark("ADB: mDNS discovery started before the toggle")
+        try {
+            for ((i, timeoutMs) in STAGED_TIMEOUTS_MS.withIndex()) {
+                found.tryReceive() // drop a stale port from before this toggle
+                toggleWifiAdb(cr, fast)
+                mark("ADB: adb_wifi_enabled=1 (attempt ${i + 1}/${STAGED_TIMEOUTS_MS.size}), waiting ${timeoutMs}ms")
+                val port = withTimeoutOrNull(timeoutMs) { awaitPort(found, usePortProp) }
+                if (port != null) {
+                    mark("ADB: port $port found on attempt ${i + 1}")
+                    return port
+                }
+                log("ADB: no port within ${timeoutMs}ms on attempt ${i + 1}")
+            }
+        } finally {
+            mdns.stop()
+        }
+        throw IllegalStateException("adb wireless port not discovered after ${STAGED_TIMEOUTS_MS.size} staged attempts")
+    }
+
+    private suspend fun awaitPort(found: Channel<Int>, usePortProp: Boolean): Int {
+        var propLogged = false
+        while (true) {
+            found.tryReceive().getOrNull()?.let { return it }
+            val p = BootLog.tlsPortProp()
+            if (p > 0) {
+                if (!propLogged) {
+                    propLogged = true
+                    mark("service.adb.tls.port property is readable: $p (used=$usePortProp)")
+                }
+                if (usePortProp) return p
+            }
+            delay(50)
+        }
+    }
+
+    /**
      * Suspends until a Wi-Fi network is available, or [timeoutMs] elapses.
      * Returns true if Wi-Fi is up. Never throws: on any problem it logs and returns false.
+     *
+     * waitForIp: report "up" only when the Wi-Fi link has a usable address (onLinkPropertiesChanged),
+     * instead of at onAvailable. If no address shows up within 3 s of onAvailable, report up anyway.
      */
-    private suspend fun awaitWifi(timeoutMs: Long): Boolean {
+    private suspend fun awaitWifi(timeoutMs: Long, waitForIp: Boolean): Boolean {
         return try {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
@@ -265,7 +442,23 @@ class DirectBootStartService : Service() {
                 callbackFlow {
                     val callback = object : ConnectivityManager.NetworkCallback() {
                         override fun onAvailable(network: Network) {
-                            trySend(true)
+                            if (!waitForIp) {
+                                trySend(true)
+                            } else {
+                                log("awaitWifi: onAvailable, waiting for an IP address")
+                                launch {
+                                    delay(3_000)
+                                    trySend(true)
+                                }
+                            }
+                        }
+
+                        override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) {
+                            if (waitForIp && lp.linkAddresses.any {
+                                    !it.address.isLinkLocalAddress && !it.address.isLoopbackAddress
+                                }) {
+                                trySend(true)
+                            }
                         }
                     }
                     val request = NetworkRequest.Builder()

@@ -240,7 +240,9 @@
             android:directBootAware="true"
             android:enabled="false"
             android:exported="true">
-            <intent-filter>
+            <!-- priority: EXPERIMENT, tries to be delivered ahead of other apps' manifest receivers.
+                 Compare "boot+" in the [receiver] log line with and without it. -->
+            <intent-filter android:priority="999">
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>

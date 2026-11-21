@@ -1,6 +1,9 @@
 package moe.shizuku.manager.utils
 
 import android.content.Context
+import android.os.SystemClock
+import android.os.SystemProperties
+import android.provider.Settings
 import android.util.Log
 import java.io.File
 import java.text.SimpleDateFormat
@@ -29,6 +32,39 @@ object BootLog {
     private const val MAX_BYTES = 256 * 1024L
 
     private val tsFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    /** System property read that never throws. Empty string if unreadable (e.g. SELinux). */
+    private fun prop(key: String): String = try {
+        SystemProperties.get(key, "")
+    } catch (e: Throwable) {
+        "?"
+    }
+
+    /**
+     * One-line snapshot of everything that matters for the adb start, for timing analysis:
+     * ms since boot, the two Settings.Global switches, and adbd / port system properties.
+     * Properties that the app may not be allowed to read show up as empty.
+     */
+    fun snapshot(context: Context): String {
+        val cr = context.contentResolver
+        fun g(name: String) = try {
+            Settings.Global.getInt(cr, name, -1).toString()
+        } catch (e: Exception) {
+            "?"
+        }
+        return "boot+${SystemClock.elapsedRealtime()}ms" +
+                " adb_enabled=${g("adb_enabled")}" +
+                " adb_wifi_enabled=${g("adb_wifi_enabled")}" +
+                " init.svc.adbd='${prop("init.svc.adbd")}'" +
+                " tls_port='${prop("service.adb.tls.port")}'" +
+                " tcp_port='${prop("service.adb.tcp.port")}'"
+    }
+
+    /** Current value of service.adb.tls.port, or -1 if empty / unreadable / not a number. */
+    fun tlsPortProp(): Int = prop("service.adb.tls.port").toIntOrNull()?.takeIf { it > 0 } ?: -1
+
+    /** Value of init.svc.adbd ("running", "stopped", "" if unreadable). */
+    fun adbdState(): String = prop("init.svc.adbd")
 
     fun log(context: Context, msg: String, tr: Throwable? = null) {
         if (tr != null) Log.e(TAG, msg, tr) else Log.i(TAG, msg)

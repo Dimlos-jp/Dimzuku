@@ -69,3 +69,19 @@ Other notes:
 - Starting the server over adb from a PC while locked works, and the server keeps running
   after the PC and Wi-Fi are disconnected, so key authorization and the server launch both
   work before unlock.
+
+## Timing log and experiment flags
+
+Every run now writes `T+<ms>` timeline marks, each with `boot+<ms>`, `adb_enabled`,
+`adb_wifi_enabled`, `init.svc.adbd` and the `service.adb.tls.port` / `service.adb.tcp.port`
+properties (empty means the app may not read it). The receiver logs `processAge`, which tells
+"slow broadcast delivery" apart from "slow start in our own code".
+
+Behaviour is switched by `boot_experiment_flags.txt` in the same device-encrypted `files/`
+directory as the log (see `BootFlags.kt` for every flag and its default). The effective values are
+logged at the start of each run as `flags: ...`.
+
+Survival check: `VERIFY(...)` is logged `verify_delay_ms` after the start command, and the
+BOOT_COMPLETED run logs `server already running` if the binder is alive after unlock. Together
+with `init.svc.adbd` these show whether the server survives `adb_wifi_enabled=0`, adbd stopping
+(`skip_adb_enabled=1`) and adbd restarting (`tcpip_after_start=1`).

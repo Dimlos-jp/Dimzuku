@@ -21,8 +21,28 @@ import moe.shizuku.manager.starter.Starter
 import moe.shizuku.manager.utils.EnvironmentUtils
 import moe.shizuku.manager.utils.ShizukuStateMachine
 
+/**
+ * Optional knobs for the boot-start experiments (see BootFlags). Defaults keep the original
+ * behaviour, so existing callers are unaffected.
+ *
+ * @param preparedKey an AdbKey (with its SSLContext already initialised) built ahead of time.
+ * @param setAdbEnabled when false, do not run `settings put global adb_enabled 1` in the shell.
+ * @param tcpipAfterStart in TCP mode, start the server on the first connection and only then
+ *        send `tcpip:`, instead of restarting adbd first.
+ */
+class AdbStartOptions(
+    val preparedKey: AdbKey? = null,
+    val setAdbEnabled: Boolean = true,
+    val tcpipAfterStart: Boolean = false,
+)
+
 object AdbStarter {
-    suspend fun startAdb(context: Context, port: Int, log: ((String) -> Unit)? = null) {
+    suspend fun startAdb(
+        context: Context,
+        port: Int,
+        log: ((String) -> Unit)? = null,
+        options: AdbStartOptions = AdbStartOptions(),
+    ) {
         suspend fun AdbClient.runCommand(cmd: String) {
             command(cmd) { log?.invoke(String(it)) }
         }
@@ -32,12 +52,18 @@ object AdbStarter {
             log?.invoke("Starting with wireless adb...\n")
         
             withContext(Dispatchers.IO) {
-                val key = runCatching { AdbKey(PreferenceAdbKeyStore(ShizukuSettings.getPreferences()), "shizuku") }
-                    .getOrElse {
-                        if (it is CancellationException) throw it
-                        else throw AdbKeyException(it)
-                    }
+                val key = options.preparedKey ?: runCatching {
+                    AdbKey(PreferenceAdbKeyStore(ShizukuSettings.getPreferences()), "shizuku")
+                }.getOrElse {
+                    if (it is CancellationException) throw it
+                    else throw AdbKeyException(it)
+                }
 
+                val startCommand =
+                    if (options.setAdbEnabled) "shell:settings put global adb_enabled 1 ; ${Starter.internalCommand}"
+                    else "shell:${Starter.internalCommand}"
+
+                var serverStarted = false
                 var activePort = port
                 val tcpMode = ShizukuSettings.getTcpMode()
                 val tcpPort = ShizukuSettings.getTcpPort()
@@ -48,6 +74,13 @@ object AdbStarter {
                         client.connect()
 
                         log?.invoke("Successfully connected on port $activePort...")
+                        if (options.tcpipAfterStart) {
+                            // EXPERIMENT: restarting adbd may kill processes in its cgroup, including
+                            // the server. The caller logs whether the server survived.
+                            log?.invoke("EXPERIMENT: starting the server before tcpip")
+                            client.runCommand(startCommand)
+                            serverStarted = true
+                        }
                         log?.invoke("\nRestarting in TCP mode port: $tcpPort")
 
                         activePort = tcpPort
@@ -57,6 +90,11 @@ object AdbStarter {
                     }
                 }
         
+                if (serverStarted) {
+                    log?.invoke("Server already started before tcpip, skipping the second connection")
+                    return@withContext
+                }
+
                 log?.invoke("Connecting on port $activePort...")
 
                 AdbClient("127.0.0.1", activePort, key).use { client ->
@@ -66,7 +104,7 @@ object AdbStarter {
                     // as the shell UID, which holds WRITE_SECURE_SETTINGS, so it works on a fresh
                     // install where the app itself can't write adb_enabled. Chained with ';' so a
                     // restrictive OEM refusing the write still lets the starter run.
-                    client.runCommand("shell:settings put global adb_enabled 1 ; ${Starter.internalCommand}")
+                    client.runCommand(startCommand)
                 }
             }
         } finally {
