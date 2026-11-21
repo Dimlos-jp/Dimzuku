@@ -29,6 +29,11 @@
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- Only effective after `adb shell pm grant <pkg> android.permission.READ_LOGS` (port_logcat). -->
+    <uses-permission
+        android:name="android.permission.READ_LOGS"
+        tools:ignore="ProtectedPermissions" />
+
     <uses-feature
         android:name="android.software.leanback"
         android:required="false" />

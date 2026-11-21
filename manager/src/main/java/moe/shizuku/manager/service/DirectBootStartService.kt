@@ -42,6 +42,7 @@ import moe.shizuku.manager.ShizukuSettings
 import moe.shizuku.manager.ShizukuSettings.LaunchMethod
 import moe.shizuku.manager.adb.AdbKey
 import moe.shizuku.manager.adb.AdbMdns
+import moe.shizuku.manager.adb.AdbPortSources
 import moe.shizuku.manager.adb.AdbStartOptions
 import moe.shizuku.manager.adb.AdbStarter
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
@@ -339,6 +340,13 @@ class DirectBootStartService : Service() {
             mark("ADB: mDNS discovery started EARLY (before Wi-Fi)")
         }
 
+        // port_logcat / port_scan: learn the port without mDNS (see AdbPortSources).
+        val sources = AdbPortSources({ log(it) }) { p -> found.trySend(p) }
+        if (staged && BootFlags.bool("port_logcat")) {
+            sources.startLogcat()
+            mark("ADB: logcat reader started")
+        }
+
         // A leftover 1 would make the later 1-write a no-op for the observer. Reset it now,
         // while we wait for Wi-Fi, instead of paying a fixed gap after Wi-Fi is up.
         if (fast && Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
@@ -352,8 +360,13 @@ class DirectBootStartService : Service() {
         if (wifiUp && settleMs > 0) delay(settleMs)
 
         return if (staged) {
-            discoverStaged(cr, fast, found, early, ::newMdns)
+            try {
+                discoverStaged(cr, fast, found, early, ::newMdns, sources)
+            } finally {
+                sources.stopAll()
+            }
         } else {
+            sources.stopAll()
             discoverLegacy(cr, fast, wifiUp)
         }
     }
@@ -406,7 +419,9 @@ class DirectBootStartService : Service() {
         found: Channel<Int>,
         existing: AdbMdns?,
         newMdns: () -> AdbMdns,
+        sources: AdbPortSources,
     ): Int {
+        val useScan = BootFlags.bool("port_scan")
         var mdns = existing ?: newMdns().also {
             it.start()
             mark("ADB: mDNS discovery started before the toggle (not early)")
@@ -415,14 +430,17 @@ class DirectBootStartService : Service() {
             val stages = stagedTimeoutsMs()
             for ((i, timeoutMs) in stages.withIndex()) {
                 found.tryReceive() // drop a stale port from before this toggle
+                sources.arm()
                 toggleWifiAdb(cr, fast)
+                if (useScan) sources.startScan()
                 mark("ADB: adb_wifi_enabled=1 (attempt ${i + 1}/${stages.size}), waiting ${timeoutMs}ms")
                 val port = withTimeoutOrNull(timeoutMs) { found.receive() }
+                sources.stopScan()
                 if (port != null) {
                     mark("ADB: port $port found on attempt ${i + 1}")
                     return port
                 }
-                log("ADB: no port within ${timeoutMs}ms on attempt ${i + 1}")
+                log("ADB: no port within ${timeoutMs}ms on attempt ${i + 1} (${sources.stats()})")
 
                 // The first toggle usually DID start adbd (see logcat "adbwifi started"); it is the
                 // discovery that missed it. Restarting the discovery picks up a service that is

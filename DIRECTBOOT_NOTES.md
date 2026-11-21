@@ -85,3 +85,14 @@ Survival check: `VERIFY(...)` is logged `verify_delay_ms` after the start comman
 BOOT_COMPLETED run logs `server already running` if the binder is alive after unlock. Together
 with `init.svc.adbd` these show whether the server survives `adb_wifi_enabled=0`, adbd stopping
 (`skip_adb_enabled=1`) and adbd restarting (`tcpip_after_start=1`).
+
+### Port sources without mDNS (patch 5)
+
+Boot logs showed that adbd's mDNS registration can fail on the first toggle (error -65563,
+mdnsd not running) and that starting our own discovery early does not start mdnsd on Android 14
+(discovery runs in system_server's Java MdnsDiscoveryManager). adbd still listens on its TLS port
+and logs `adbwifi started on port N`, so the port is taken from there, or found by scanning:
+
+- `port_logcat=1`: needs `adb shell pm grant <applicationId> android.permission.READ_LOGS` once.
+- `port_scan=1`: probes 127.0.0.1:32768-60999 for an adbd (CNXN -> STLS). No permission needed.
+- mDNS stays as the fallback; the first source that reports a port wins.
