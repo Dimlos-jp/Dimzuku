@@ -28,12 +28,6 @@
             android:text="@string/bug_report_dialog_update" />
 
         <TextView
-            android:id="@+id/wikiText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/bug_report_dialog_wiki" />
-
-        <TextView
             android:id="@+id/issuesText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -50,12 +44,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/bug_report_dialog_method"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/bug_report_dialog_method_2"
             android:textStyle="bold" />
 
     </LinearLayout>

@@ -11,20 +11,16 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Finds the wireless-debugging (adbd TLS) port without mDNS.
+ * Finds the wireless-debugging (adbd TLS) port without mDNS. adbd listens within milliseconds of
+ * `adb_wifi_enabled=1`, but its mDNS registration can fail right after boot (error -65563) and is
+ * visible to discovery only ~1 s later; `service.adb.tls.port` is not readable by apps and logcat
+ * is not available before unlock.
  *
- * Why: right after `adb_wifi_enabled` is switched on, adbd starts listening within a few ms, but
- * its mDNS registration can fail (error -65563, mdnsd not running yet) and even a successful one
- * is only visible to discovery ~1 s later. `service.adb.tls.port` can't be read (SELinux) and
- * logcat needs a log-access consent that can't be given before unlock.
+ * The TLS server listens on an ephemeral port on all interfaces. Every open loopback port in
+ * 32768..60999 is probed with an adb CNXN packet; adbd answers STLS (AUTH / CNXN for a plain adbd).
  *
- * How: adbd's TLS server listens on an ephemeral port (32768..60999) on all interfaces. Every
- * open port in that range on loopback is probed with an adb CNXN packet; adbd answers with STLS
- * (AUTH / CNXN for a plain adbd). Other apps' listening sockets don't answer like that.
- * Needs no permission beyond INTERNET. Measured on a Pixel 7: ~0.4-0.9 s for the first hit.
- *
- * Call [start] right after the toggle, [stop] when done. The first port found is reported once
- * through [onPort]; everything is logged through [log].
+ * Call [start] right after the toggle and [stop] when done. The first port found is reported once
+ * through [onPort].
  */
 class AdbPortScanner(
     private val log: (String) -> Unit,

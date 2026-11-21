@@ -190,22 +190,6 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
-        <!-- Experimental one-tap pairing autopilot, phone/tablet only. Separate from
-             AdbPairingAccessibilityService above, which is TV-only and scoped to
-             com.android.tv.settings — the two never compete for the same screen. -->
-        <service
-            android:name=".adb.PairingAutopilotService"
-            android:label="@string/autopilot_title"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_autopilot" />
-        </service>
-
         <service
             android:name=".service.WatchdogService"
             android:exported="false"
@@ -231,17 +215,13 @@
             </intent-filter>
         </receiver>
 
-        <!-- Single boot entry point. directBootAware so it also receives LOCKED_BOOT_COMPLETED
-             before first unlock; BOOT_COMPLETED after unlock confirms or retries.
-             enabled="false" by default: the "Start on boot" setting toggles this component
-             (ShizukuSettings.setStartOnBoot). Both broadcasts hand off to DirectBootStartService. -->
+        <!-- Boot entry point; the "Start on boot" setting toggles this component -->
         <receiver
             android:name=".receiver.BootCompleteReceiver"
             android:directBootAware="true"
             android:enabled="false"
             android:exported="true">
-            <!-- priority: EXPERIMENT, tries to be delivered ahead of other apps' manifest receivers.
-                 Compare "boot+" in the [receiver] log line with and without it. -->
+            <!-- priority: deliver ahead of other apps' receivers -->
             <intent-filter android:priority="999">
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

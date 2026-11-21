@@ -63,36 +63,6 @@
     <string name="adb_pairing_tutorial_content_network">Shizuku needs to access the local network. It is controlled by the network permission.</string>
     <string name="adb_pairing_tutorial_content_network_limation_not_foreground">Some systems (such as MIUI) disallow apps to access the network when they are not visible, even if the app uses a foreground service. Please disable battery optimization features for Shizuku on such systems.</string>
 
-    <!-- Experimental pairing autopilot (phone/tablet) -->
-    <string name="autopilot_button">Auto pair</string>
-    <string name="autopilot_title">Automatic pairing (experimental)</string>
-    <string name="autopilot_service_description">Completes wireless debugging pairing automatically by navigating the system Settings app: enables Developer options, turns on Wireless debugging, opens the pairing dialog, and reads the pairing code. Runs only when you start it, and turns itself off when finished.</string>
-    <string name="autopilot_service_summary">One-tap wireless debugging pairing</string>
-    <string name="autopilot_confirm_message">Shizuku will now open the system Settings and pair itself automatically.\n\nIt will enable Developer options if needed, turn on Wireless debugging, open the pairing dialog, and read the pairing code.\n\nPlease do not touch the screen while it runs. Each step is paused for 3 seconds so you can follow along.</string>
-    <string name="autopilot_enable_message">Automatic pairing needs an accessibility service so it can read and tap the system Settings screens.\n\nOn the next screen, enable the automatic pairing service. Pairing starts as soon as you turn it on, and the service switches itself off once pairing completes.</string>
-    <string name="autopilot_run">Start</string>
-    <string name="autopilot_already_running">Automatic pairing is already running.</string>
-    <string name="autopilot_restricted_settings_app_info">The accessibility service needed for automatic pairing is shown as \"controlled by restricted setting\" because Shizuku was installed from an APK.\n\nTap \"Enable\" to open the accessibility screen. If the toggle is blocked, tap \"Open App info\" and choose \"Allow restricted settings\" from the ⋮ menu, then come back and enable the service.</string>
-    <string name="autopilot_open_app_info">Open App info</string>
-    <string name="autopilot_open_app_info_failed">Could not open App info. Open it manually from Settings.</string>
-    <string name="autopilot_step_start">Starting automatic pairing…</string>
-    <string name="autopilot_step_dev_options">Enabling Developer options…</string>
-    <string name="autopilot_step_open_devsettings">Opening Developer options…</string>
-    <string name="autopilot_step_toggle">Turning on Wireless debugging…</string>
-    <string name="autopilot_step_open_detail">Opening Wireless debugging…</string>
-    <string name="autopilot_step_pair_entry">Opening the pairing dialog…</string>
-    <string name="autopilot_step_reading_code">Reading the pairing code…</string>
-    <string name="autopilot_step_pairing">Pairing…</string>
-    <string name="autopilot_succeeded">Pairing successful! Shizuku is now paired.</string>
-    <string name="autopilot_needs_screen_lock">Please confirm your screen lock to continue.</string>
-
-    <string name="autopilot_failed">Automatic pairing failed: %1$s</string>
-    <string name="autopilot_failed_dev_options">Could not enable Developer options. Please enable it manually and try again.</string>
-    <string name="autopilot_failed_toggle">Could not find the Wireless debugging switch.</string>
-    <string name="autopilot_failed_detail">Could not open the Wireless debugging screen.</string>
-    <string name="autopilot_failed_pair_entry">Could not find \"Pair device with pairing code\".</string>
-    <string name="autopilot_failed_no_code">Could not read the pairing code from the dialog.</string>
-
     <!-- Home - Root -->
     <string name="home_root_title"><![CDATA[Start (for rooted devices)]]></string>
     <string name="home_root_description"><![CDATA[If you are using Magisk, you can try %1$s. For root users, it will eventually replace Shizuku. Note, existing applications need to change a little to use %2$s.]]></string>
@@ -263,7 +233,6 @@
     <string name="action_about">About</string>
     <string name="about_dialog_button_close">Close</string>
     <string name="about_view_source_code"><![CDATA[View source code at %s]]></string>
-    <string name="buy_me_a_coffee">Buy me a coffee</string>
 
     <!-- Start/Stop -->
      <string name="start">Start</string>

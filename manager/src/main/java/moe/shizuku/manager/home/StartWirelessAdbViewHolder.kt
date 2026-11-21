@@ -26,7 +26,6 @@ import moe.shizuku.manager.adb.AdbStarter
 import moe.shizuku.manager.databinding.HomeItemContainerBinding
 import moe.shizuku.manager.databinding.HomeStartWirelessAdbBinding
 import moe.shizuku.manager.home.showAccessibilityDialog
-import moe.shizuku.manager.home.startPairingAutopilot
 import moe.shizuku.manager.ktx.toHtml
 import moe.shizuku.manager.receiver.NotifCancelReceiver
 import moe.shizuku.manager.starter.StarterActivity
@@ -112,11 +111,6 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
             binding.button2.setOnClickListener { v: View ->
                 onPairClicked(v.context)
             }
-            // Experimental: drives the whole Settings pairing flow via an accessibility
-            // service instead of walking the user through it manually.
-            binding.buttonAutopilot.setOnClickListener { v: View ->
-                v.context.startPairingAutopilot()
-            }
             binding.text1.movementMethod = LinkMovementMethod.getInstance()
             binding.text1.text = context.getString(R.string.home_wireless_adb_description)
                 .toHtml(HtmlCompat.FROM_HTML_OPTION_TRIM_WHITESPACE)
@@ -125,7 +119,6 @@ class StartWirelessAdbViewHolder(binding: HomeStartWirelessAdbBinding, root: Vie
                 .toHtml(HtmlCompat.FROM_HTML_OPTION_TRIM_WHITESPACE)
             binding.button2.isVisible = false
             binding.button3.isVisible = false
-            binding.buttonAutopilot.isVisible = false
         }
     }
 

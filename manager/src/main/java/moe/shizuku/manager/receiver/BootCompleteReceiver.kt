@@ -32,8 +32,7 @@ class BootCompleteReceiver : BroadcastReceiver() {
         val action = intent.action
         if (action != Intent.ACTION_LOCKED_BOOT_COMPLETED && action != Intent.ACTION_BOOT_COMPLETED) return
 
-        // processAge = how long this process has existed when the broadcast reaches us. If boot+ is
-        // large while processAge is small, the delay is in the system's broadcast delivery.
+        // processAge: a large boot+ with a small processAge means a slow broadcast delivery
         val processAge = SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime()
         BootLog.log(context, "[receiver] $action user=${UserHandleCompat.myUserId()} " +
                 "boot+${SystemClock.elapsedRealtime()}ms processAge=${processAge}ms")

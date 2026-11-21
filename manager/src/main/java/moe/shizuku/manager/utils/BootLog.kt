@@ -40,11 +40,7 @@ object BootLog {
         "?"
     }
 
-    /**
-     * One-line snapshot of everything that matters for the adb start, for timing analysis:
-     * ms since boot, the two Settings.Global switches, and adbd / port system properties.
-     * Properties that the app may not be allowed to read show up as empty.
-     */
+    /** One-line snapshot: ms since boot, the two adb switches, adbd state and tcp port. */
     fun snapshot(context: Context): String {
         val cr = context.contentResolver
         fun g(name: String) = try {

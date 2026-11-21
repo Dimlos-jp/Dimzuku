@@ -22,14 +22,12 @@ import moe.shizuku.manager.utils.EnvironmentUtils
 import moe.shizuku.manager.utils.ShizukuStateMachine
 
 /**
- * Optional knobs for the boot-start experiments (see BootFlags). Defaults keep the original
- * behaviour, so existing callers are unaffected.
+ * Optional knobs for the boot start (see BootFlags); the defaults keep the original behaviour.
  *
- * @param preparedKey an AdbKey (with its SSLContext already initialised) built ahead of time.
- * @param setAdbEnabled when false, do not run `settings put global adb_enabled 1` in the shell.
- * @param tcpipAfterStart in TCP mode, start the server on the first connection and only then
- *        send `tcpip:`, instead of restarting adbd first.
- * @param reconnectIntervalMs when > 0, the reconnect after `tcpip:` retries at this fixed interval
+ * @param preparedKey an AdbKey built ahead of time.
+ * @param setAdbEnabled when false, `adb_enabled` is not written.
+ * @param tcpipAfterStart in TCP mode, start the server first and send `tcpip:` afterwards.
+ * @param reconnectIntervalMs when > 0, the reconnect after `tcpip:` polls at this interval
  *        (up to [reconnectAttempts]) instead of the growing 0/1/2/3/4 s waits.
  */
 class AdbStartOptions(
@@ -79,9 +77,7 @@ object AdbStarter {
 
                         log?.invoke("Successfully connected on port $activePort...")
                         if (options.tcpipAfterStart) {
-                            // EXPERIMENT: restarting adbd may kill processes in its cgroup, including
-                            // the server. The caller logs whether the server survived.
-                            log?.invoke("EXPERIMENT: starting the server before tcpip")
+                            log?.invoke("starting the server before tcpip")
                             client.runCommand(startCommand)
                             serverStarted = true
                         }
@@ -104,10 +100,8 @@ object AdbStarter {
                 AdbClient("127.0.0.1", activePort, key).use { client ->
                     connectWithRetry(client, options.reconnectIntervalMs, options.reconnectAttempts)
                     log?.invoke("Successfully connected on port $activePort...\n")
-                    // Enable USB debugging in the same shell that starts the server. This runs
-                    // as the shell UID, which holds WRITE_SECURE_SETTINGS, so it works on a fresh
-                    // install where the app itself can't write adb_enabled. Chained with ';' so a
-                    // restrictive OEM refusing the write still lets the starter run.
+                    // adb_enabled is written from the shell UID (it holds WRITE_SECURE_SETTINGS);
+                    // ';' keeps the starter running if an OEM refuses the write
                     client.runCommand(startCommand)
                 }
             }

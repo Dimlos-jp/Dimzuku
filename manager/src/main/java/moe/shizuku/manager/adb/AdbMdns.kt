@@ -21,14 +21,10 @@ class AdbMdns(
     private val observer: Observer<Pair<String, Int>>
 ) {
 
-    /**
-     * Optional trace of every discovery / resolve event, for the boot log. A property (not a
-     * constructor parameter) so the existing trailing-lambda callers keep compiling.
-     */
+    /** Optional trace of discovery and resolve events, for the boot log. */
     var debug: ((String) -> Unit)? = null
 
-    // A resolve can fail (e.g. the record is not complete yet). Without a retry the service is
-    // never reported again by the discovery, and the caller waits for nothing.
+    // A failed resolve is retried; the discovery does not report the service again
     private val handler = Handler(Looper.getMainLooper())
     private val resolveAttempts = ConcurrentHashMap<String, Int>()
 

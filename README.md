@@ -21,15 +21,12 @@ Wi-Fi itself is usable at ~boot+17.6 s, which is the floor.
 Notes: the application id is still `moe.shizuku.privileged.api` (the server identifies the manager
 by it), so Dimzuku can't be installed next to the official Shizuku. Tested on one device only.
 
----
+Compared with the versions it builds on:
 
-<div align="center">
-   
-# Shizuku
+- The app's settings and adb key live in device-encrypted storage, so the start can run before the
+  first unlock (BombPerry's Direct Boot fork).
+- Removed: the experimental auto pairing pilot, the donation link, and the links to the upstream
+  wiki, issue tracker, translation project and update feed. Bug reports and updates go to this
+  repository.
 
-What this adds compared to thedjchi's 13.7.0 version:
-
-moved the app from credential encrypted storage to device encrypted storage.
-This allows the app to start pre-unlock after a reboot and start the server quicker
-
-Additionally a "auto pairing pilot" for lazy first time pairing that is very experimental and can be easily interrupted and probably doesn't work fully on your device.
+License: Apache-2.0, see [LICENSE](LICENSE).

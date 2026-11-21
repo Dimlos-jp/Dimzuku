@@ -29,7 +29,6 @@ import moe.shizuku.manager.ktx.toHtml
 import moe.shizuku.manager.management.AppsViewModel
 import moe.shizuku.manager.settings.SettingsActivity
 import moe.shizuku.manager.utils.AppIconCache
-import moe.shizuku.manager.utils.CustomTabsHelper
 import moe.shizuku.manager.utils.EnvironmentUtils
 import moe.shizuku.manager.utils.SettingsHelper
 import moe.shizuku.manager.utils.ShizukuStateMachine
@@ -199,7 +198,7 @@ abstract class HomeActivity : AppBarActivity() {
                 binding.sourceCode.movementMethod = LinkMovementMethod.getInstance()
                 binding.sourceCode.text = getString(
                     R.string.about_view_source_code,
-                    "<b><a href=\"https://github.com/thedjchi/Shizuku\">GitHub</a></b>"
+                    "<b><a href=\"https://github.com/${getString(R.string.repo_slug)}\">GitHub</a></b>"
                 ).toHtml()
                 binding.icon.setImageBitmap(
                     AppIconCache.getOrLoadBitmap(
@@ -215,10 +214,6 @@ abstract class HomeActivity : AppBarActivity() {
                     lifecycleScope.launch {
                         UpdateHelper.checkAndInstallUpdates()
                     }
-                }
-
-                binding.btnDonate.setOnClickListener {
-                    CustomTabsHelper.launchUrlOrCopy(this, "https://www.buymeacoffee.com/thedjchi")
                 }
 
                 val dialog = MaterialAlertDialogBuilder(this)

@@ -55,80 +55,57 @@ import moe.shizuku.manager.utils.ShizukuStateMachine
 import rikka.shizuku.Shizuku
 
 /**
- * Direct-boot-aware foreground service that starts the Shizuku server at boot, in both phases:
- * before first unlock (LOCKED_BOOT_COMPLETED) and after it (BOOT_COMPLETED).
- *
- * It does not use WorkManager, because WorkManager/JobScheduler do not dispatch before first
- * unlock. If an attempt fails after unlock, it hands over to the normal AdbStartWorker path
- * (ShizukuReceiverStarter), which has the retry logic and the "Attempt now" notification.
+ * Direct-boot-aware foreground service that starts the Shizuku server at boot, before the first
+ * unlock (LOCKED_BOOT_COMPLETED) and after it (BOOT_COMPLETED). It does not use WorkManager,
+ * which does not run before first unlock. A failed attempt after unlock is handed over to
+ * AdbStartWorker (retry with backoff, "Attempt now" notification).
  *
  * Flow:
- *   0. Already running? (only checkable after unlock) -> done.
- *   1. ROOT launch mode -> start via su. Works in either phase where root is available.
- *   2. ADB launch mode:
- *        a. fixed TCP port (TCP mode)   -> loopback connect, no Wi-Fi / mDNS needed.
- *        b. wireless debugging (TLS)    -> wait for Wi-Fi, toggle adb_wifi_enabled 0 -> 1,
- *                                          discover the port via mDNS, retry a few times.
- *   3. Before unlock: once the start command is sent, finish. The binder can only be delivered
- *      after unlock, so the BOOT_COMPLETED run confirms the server instead of waiting here.
- *      After unlock: wait for the binder.
+ *   0. Server already running (checkable after unlock only) -> nothing to do.
+ *   1. Root launch mode -> start through su.
+ *   2. ADB launch mode: with a fixed TCP port, connect over loopback; otherwise wait for Wi-Fi,
+ *      toggle adb_wifi_enabled 0 -> 1, find the wireless-debugging port, connect and start.
+ *   3. Before unlock the run ends once the start command is sent (the binder is only delivered
+ *      after unlock); the BOOT_COMPLETED run confirms. After unlock it waits for the binder.
  *
- * Every step is logged via [BootLog] to a device-encrypted file, see BootLog for how to read it.
+ * AdbDebuggingManager evaluates adb_wifi_enabled once, when the setting changes. Without a
+ * connected Wi-Fi at that moment it ignores the change, so the toggle waits for Wi-Fi and
+ * is repeated until a port shows up.
  *
- * NOTE (Wi-Fi timing, from Dimlos):
- *   AdbDebuggingManager evaluates "adb_wifi_enabled" ONCE, at the moment the setting changes.
- *   If the device is not yet connected to a (trusted) Wi-Fi network at that instant, it logs
- *   "Not connected to any wireless network. Not enabling adbwifi." and never retries.
- *   Early in a locked boot Wi-Fi is usually not up yet, so we (a) wait for Wi-Fi first,
- *   and (b) toggle adb_wifi_enabled 0 -> 1 on every attempt so the framework re-evaluates.
- *
- * NOTE (no double start):
- *   - After unlock, a BOOT_COMPLETED run first checks Shizuku.pingBinder() and skips the start
- *     if the locked-boot run already brought the server up (from Dimlos).
- *   - If a run is still in progress when the next boot broadcast arrives (e.g. still waiting
- *     for Wi-Fi when the user unlocks), the new request is ignored and the running attempt
- *     simply continues.
+ * A run still in progress when the next boot broadcast arrives is not restarted.
  */
 class DirectBootStartService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private var runJob: Job? = null
 
-    // Start of the current run (elapsedRealtime), for the T+ timestamps in the boot log.
+    // elapsedRealtime at the start of the run, for the T+ timestamps in the boot log
     private var runT0 = 0L
 
     companion object {
         private const val CHANNEL_ID = "BootStart"
         private const val NOTIFICATION_ID = 1449
 
-        // How long to wait for Wi-Fi to come up before the first attempt (locked boot can be slow).
+        // How long to wait for Wi-Fi before the first attempt (a locked boot can be slow).
         private const val WIFI_WAIT_MS = 90_000L
 
-        // Extra settle time after Wi-Fi reports available, so the framework's own
-        // WifiManager connection info (BSSID) is populated when it checks.
+        // Settle time after Wi-Fi reports available, used when fast_toggle is off.
         private const val WIFI_SETTLE_MS = 1_500L
 
-        // Per-attempt mDNS discovery window, and how many toggle+discover attempts we make.
+        // Discovery window and attempt count of the non-staged path.
         private const val DISCOVER_TIMEOUT_MS = 15_000L
         private const val MAX_ATTEMPTS = 4
 
-        // staged_discovery: one mDNS discovery for the whole run, with short per-attempt waits
-        // (instead of MAX_ATTEMPTS x DISCOVER_TIMEOUT_MS). A failed first toggle costs 4 s, not 15 s.
-        // The first value comes from the discover_window_ms flag (default 2 s): a toggle that works
-        // publishes the port after ~1 s, so a longer wait only delays the retry of a failed toggle.
+        // staged_discovery: short per-attempt waits; the first comes from discover_window_ms.
         private fun stagedTimeoutsMs(): List<Long> {
             val w = BootFlags.int("discover_window_ms").toLong().coerceAtLeast(500L)
             return listOf(w, w, w + w / 2, w * 3, 10_000L)
         }
 
-        // fast_toggle: gap between writing 0 and 1 when a retry has to re-toggle (the old code
-        // always waited 500 ms, even on the first attempt where the value was already 0).
+        // fast_toggle: gap between writing 0 and 1 when a retry re-toggles
         private const val RETOGGLE_GAP_MS = 150L
 
-        // After unlock, how long to wait for the binder of an already-running server to arrive
-        // before concluding that no server is running. (The binder is delivered via the
-        // ShizukuProvider, which only works after unlock; in measurements it arrived <1s
-        // after unlock and this service starts ~4s after unlock.)
+        // After unlock: how long to wait for the binder of an already-running server
         private const val ALREADY_RUNNING_WAIT_MS = 6_000L
 
         fun start(context: Context) {
@@ -179,11 +156,8 @@ class DirectBootStartService : Service() {
     private suspend fun runStart() {
         mark("run start")
 
-        // STEP 0: if a previous run already started the server, don't kill and restart it
-        // (that caused a ~3s outage a few seconds after unlock). Only checkable after unlock.
+        // Step 0: don't restart a server that is already running (only checkable after unlock)
         if (isUserUnlocked() && isAlreadyRunning()) {
-            // If the locked-phase run sent the start command, this is the proof that the server
-            // survived everything that happened afterwards (adb_wifi_enabled=0, tcpip, ...).
             mark("server already running (binder alive) - nothing to do")
             return
         }
@@ -197,10 +171,9 @@ class DirectBootStartService : Service() {
             }
         }
 
-        // STEP 3
+        // Step 3
         if (!isUserUnlocked()) {
             log("start command sent while locked - binder arrives after unlock, the BOOT_COMPLETED run will confirm")
-            // pingBinder cannot work while locked, but init.svc.adbd can still be logged.
             verifyAfterStart("locked")
             return
         }
@@ -210,7 +183,7 @@ class DirectBootStartService : Service() {
         verifyAfterStart("unlocked")
     }
 
-    /** STEP 1: root. Same command as ShizukuReceiverStarter.rootStart. */
+    /** Step 1: root, same command as ShizukuReceiverStarter.rootStart. */
     private fun startWithRoot() {
         if (!Shell.getShell().isRoot) {
             Shell.getCachedShell()?.close()
@@ -224,7 +197,7 @@ class DirectBootStartService : Service() {
         log("ROOT: starter exit code ${result.code}")
     }
 
-    /** STEP 2: adb, either via a fixed TCP port or via wireless debugging. */
+    /** Step 2: adb, via a fixed TCP port or wireless debugging. */
     private suspend fun startWithAdb() {
         val cr: ContentResolver = contentResolver
 
@@ -243,8 +216,7 @@ class DirectBootStartService : Service() {
             return
         }
 
-        // prewarm_key: build the AdbKey (Keystore decrypt, certificate, SSLContext) while we wait
-        // for Wi-Fi, so the TLS handshake is the only work left once the port is known.
+        // prewarm_key: build the AdbKey while waiting for Wi-Fi
         val keyDeferred: Deferred<AdbKey?>? =
             if (BootFlags.bool("prewarm_key") && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
                 scope.async { prewarmKey() }
@@ -296,12 +268,7 @@ class DirectBootStartService : Service() {
         null
     }
 
-    /**
-     * Survival check, a fixed delay after the start command: is the server still alive, and what
-     * is adbd doing? Compares the cases (adb_enabled written or not, tcpip before or after start).
-     * pingBinder is only meaningful after unlock; while locked, the BOOT_COMPLETED run logs
-     * "server already running" instead, which is the same proof.
-     */
+    /** Logs, a fixed delay after the start command, whether the server and adbd are still alive. */
     private suspend fun verifyAfterStart(phase: String) {
         val delayMs = BootFlags.int("verify_delay_ms").toLong()
         if (delayMs <= 0) return
@@ -312,12 +279,8 @@ class DirectBootStartService : Service() {
     }
 
     /**
-     * Wait for Wi-Fi, then toggle adb_wifi_enabled 0 -> 1 and look for the TLS port via mDNS.
-     * Retries a few times, because the framework only evaluates the setting at the moment it
-     * changes.
-     *
-     * Behaviour is switched by BootFlags: fast_toggle, staged_discovery, early_mdns,
-     * wifi_settle_ms (see BootFlags for what each one does).
+     * Waits for Wi-Fi, toggles adb_wifi_enabled 0 -> 1 and returns the wireless-debugging port,
+     * found by AdbPortScanner or mDNS, whichever answers first. Behaviour is switched by BootFlags.
      */
     private suspend fun enableWifiDebuggingAndDiscoverPort(cr: ContentResolver): Int {
         val fast = BootFlags.bool("fast_toggle")
@@ -331,20 +294,9 @@ class DirectBootStartService : Service() {
             }
         }.also { it.debug = { msg -> log(msg) } }
 
-        // early_mdns: the first NsdManager request is what starts the mDNS daemon (mdnsd). If adbd
-        // registers its service before mdnsd is up, the registration fails (error -65563) and the
-        // service can never be discovered. So start the discovery now, while we still wait for Wi-Fi.
-        var early: AdbMdns? = null
-        if (staged && BootFlags.bool("early_mdns")) {
-            early = newMdns().also { it.start() }
-            mark("ADB: mDNS discovery started EARLY (before Wi-Fi)")
-        }
-
-        // port_scan: learn the port without mDNS (see AdbPortScanner).
         val scanner = AdbPortScanner({ log(it) }) { p -> found.trySend(p) }
 
-        // A leftover 1 would make the later 1-write a no-op for the observer. Reset it now,
-        // while we wait for Wi-Fi, instead of paying a fixed gap after Wi-Fi is up.
+        // A leftover 1 would turn the later write of 1 into a no-op; reset it while waiting for Wi-Fi
         if (fast && Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
             Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
             mark("adb_wifi_enabled was 1, pre-reset to 0")
@@ -357,7 +309,7 @@ class DirectBootStartService : Service() {
 
         return if (staged) {
             try {
-                discoverStaged(cr, fast, found, early, ::newMdns, scanner)
+                discoverStaged(cr, fast, found, ::newMdns, scanner)
             } finally {
                 scanner.stop()
             }
@@ -366,11 +318,7 @@ class DirectBootStartService : Service() {
         }
     }
 
-    /**
-     * Makes the framework see a real 0 -> 1 change of adb_wifi_enabled.
-     * Legacy: always write 0, wait 500 ms, write 1.
-     * fast: write 0 and wait only if the value is currently 1 (a retry, or a leftover).
-     */
+    /** Makes the framework see a real 0 -> 1 change; with [fast] only if the value is 1 now. */
     private suspend fun toggleWifiAdb(cr: ContentResolver, fast: Boolean) {
         if (!fast) {
             Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
@@ -385,7 +333,7 @@ class DirectBootStartService : Service() {
         Settings.Global.putInt(cr, "adb_wifi_enabled", 1)
     }
 
-    /** Original strategy: a new mDNS discovery per attempt, started after the toggle, 15 s each. */
+    /** Original strategy: a new mDNS discovery per attempt, 15 s each. */
     private suspend fun discoverLegacy(cr: ContentResolver, fast: Boolean, wifiUp: Boolean): Int {
         for (attempt in 1..MAX_ATTEMPTS) {
             toggleWifiAdb(cr, fast)
@@ -395,7 +343,6 @@ class DirectBootStartService : Service() {
             } catch (e: TimeoutCancellationException) {
                 log("ADB: mDNS discovery timed out on attempt $attempt")
                 if (!wifiUp) {
-                    // Wi-Fi may have come up while we were waiting; give it another chance.
                     if (awaitWifi(5_000, waitForIp = false)) delay(WIFI_SETTLE_MS)
                 }
             }
@@ -403,23 +350,18 @@ class DirectBootStartService : Service() {
         throw IllegalStateException("adb wireless port not discovered after $MAX_ATTEMPTS attempts")
     }
 
-    /**
-     * staged_discovery: one mDNS discovery for the whole run, started [existing] (early) or right
-     * here, and kept running across attempts. Each attempt waits only the staged timeout before
-     * re-toggling. A re-toggle is also the only cure when adbd's mDNS registration failed.
-     */
+    /** One mDNS discovery for the whole run, short waits, re-toggle when no port shows up. */
     private suspend fun discoverStaged(
         cr: ContentResolver,
         fast: Boolean,
         found: Channel<Int>,
-        existing: AdbMdns?,
         newMdns: () -> AdbMdns,
         scanner: AdbPortScanner,
     ): Int {
         val useScan = BootFlags.bool("port_scan")
-        var mdns = existing ?: newMdns().also {
+        val mdns = newMdns().also {
             it.start()
-            mark("ADB: mDNS discovery started before the toggle (not early)")
+            mark("ADB: mDNS discovery started")
         }
         try {
             val stages = stagedTimeoutsMs()
@@ -435,23 +377,6 @@ class DirectBootStartService : Service() {
                     return port
                 }
                 log("ADB: no port within ${timeoutMs}ms on attempt ${i + 1}")
-
-                // The first toggle usually DID start adbd (see logcat "adbwifi started"); it is the
-                // discovery that missed it. Restarting the discovery picks up a service that is
-                // already registered, and does not kill the adbd that is listening.
-                if (BootFlags.bool("rediscover_before_retoggle")) {
-                    mark("ADB: restarting mDNS discovery before re-toggling")
-                    mdns.stop()
-                    mdns = newMdns()
-                    mdns.start()
-                    val again = withTimeoutOrNull(BootFlags.int("rediscover_wait_ms").toLong()) {
-                        found.receive()
-                    }
-                    if (again != null) {
-                        mark("ADB: port $again found after restarting the discovery (attempt ${i + 1})")
-                        return again
-                    }
-                }
             }
         } finally {
             mdns.stop()
@@ -460,17 +385,13 @@ class DirectBootStartService : Service() {
     }
 
     /**
-     * Suspends until a Wi-Fi network is available, or [timeoutMs] elapses.
-     * Returns true if Wi-Fi is up. Never throws: on any problem it logs and returns false.
-     *
-     * waitForIp: report "up" only when the Wi-Fi link has a usable address (onLinkPropertiesChanged),
-     * instead of at onAvailable. If no address shows up within 3 s of onAvailable, report up anyway.
+     * Suspends until Wi-Fi is available or [timeoutMs] elapses; never throws. With [waitForIp],
+     * "up" means the link has an address (or 3 s passed since onAvailable).
      */
     private suspend fun awaitWifi(timeoutMs: Long, waitForIp: Boolean): Boolean {
         return try {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-            // Already on Wi-Fi?
             val activeCaps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
             if (activeCaps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
                 log("awaitWifi: already on Wi-Fi")
@@ -539,11 +460,7 @@ class DirectBootStartService : Service() {
             true
         } ?: false
 
-    /**
-     * Before unlock: do nothing, the BOOT_COMPLETED run after unlock tries again.
-     * After unlock: if the server still isn't up, hand over to the normal AdbStartWorker path,
-     * which retries with backoff and shows the "Attempt now" notification.
-     */
+    /** Before unlock: nothing, the BOOT_COMPLETED run tries again. After unlock: AdbStartWorker. */
     private suspend fun handOffAfterFailure() {
         if (!isUserUnlocked()) {
             log("failure while locked - the BOOT_COMPLETED run will retry after unlock")

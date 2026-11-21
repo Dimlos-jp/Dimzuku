@@ -30,8 +30,6 @@ public class ShizukuSettings {
         public static final String KEY_TCP_PORT = "tcp_port";
         public static final String KEY_AUTO_DISABLE_USB_DEBUGGING = "auto_disable_usb_debugging";
         public static final String KEY_LANGUAGE = "language";
-        public static final String KEY_TRANSLATION = "translation";
-        public static final String KEY_TRANSLATION_CONTRIBUTORS = "translation_contributors";
         public static final String KEY_LIGHT_THEME = "light_theme";
         public static final String KEY_NIGHT_MODE = "night_mode";
         public static final String KEY_BLACK_NIGHT_THEME = "black_night_theme";

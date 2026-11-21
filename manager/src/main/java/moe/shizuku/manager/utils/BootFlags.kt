@@ -4,46 +4,25 @@ import android.content.Context
 import java.io.File
 
 /**
- * Experiment flags for the boot-start path, read from a plain text file in DEVICE-ENCRYPTED
- * storage so they can be read before first unlock and changed without rebuilding:
+ * Experiment flags for the boot start, read before first unlock from a text file in
+ * device-encrypted storage:
  *
  *     /data/user_de/0/<applicationId>/files/boot_experiment_flags.txt
  *
- * One `key=value` per line, `#` starts a comment. Missing keys use the defaults below. The file
- * is re-read at the start of every boot-start run, and the effective values are logged.
+ * One `key=value` per line, `#` starts a comment; missing keys use the defaults below. The file is
+ * re-read at the start of every run and the effective values are logged. Debug builds only:
+ *     adb shell run-as <applicationId> sh -c 'echo wifi_settle_ms=300 > /data/user_de/0/<applicationId>/files/boot_experiment_flags.txt'
  *
- * Set flags from a PC (debug builds only, because of run-as). Use the absolute DE path, because
- * a relative `files/` is the credential-encrypted directory:
- *     adb shell run-as <applicationId> sh -c "printf 'skip_adb_enabled=1\n' > /data/user_de/0/<applicationId>/files/boot_experiment_flags.txt"
- *
- * Flags (default in brackets):
- *   prewarm_key=1          Build AdbKey + SSLContext in parallel while waiting for Wi-Fi.
- *   fast_toggle=1          Only reset adb_wifi_enabled to 0 if it is currently 1, and skip the
- *                          fixed 500 ms gap when it was already 0 (retries use a short gap).
- *   staged_discovery=1     Start mDNS discovery once, before the first toggle, keep it running
- *                          across attempts, and use short staged timeouts instead of 15 s x 4.
- *   port_scan=1            After each toggle, scan 127.0.0.1:32768-60999 and probe open ports with
- *                          an adb CNXN (adbd answers STLS). No permission needed.
- *   early_mdns=0           Start the mDNS discovery at the very beginning of the run. Did NOT help:
- *                          on Android 14 discovery runs in system_server's Java MdnsDiscoveryManager
- *                          and does not start mdnsd, so adbd's mDNS registration (error -65563)
- *                          still failed on some first toggles. Kept for experiments.
- *   wifi_settle_ms=0       Extra wait after Wi-Fi has an IP address (the old fixed value was 1500).
- *                          With port_scan=1 the first toggle works at 0 on a Pixel 7; use 300 if it fails.
- *   discover_window_ms=2000  staged_discovery: how long to wait for the port after a toggle before
- *                          re-toggling. A successful toggle published the port after ~1.05 s.
- *   rediscover_before_retoggle=0  When no port shows up within discover_window_ms, first restart the
- *                          mDNS discovery (adbd keeps running) and wait rediscover_wait_ms, and only
- *                          then re-toggle. Measured: this does NOT help, the cause was adbd's failed
- *                          mDNS registration, which only a re-toggle repeats. Kept for experiments.
- *   rediscover_wait_ms=700 How long to wait after restarting the discovery.
- *   fast_reconnect=1       After `tcpip:` restarts adbd, poll the reconnect every 200 ms instead of
- *                          the old 0 / 1 / 2 / 3 / 4 s growing waits.
- *   skip_adb_enabled=0     Do NOT write adb_enabled=1 (neither from the app nor in the adb shell).
- *                          EXPERIMENT: check that the server still survives, see verify log.
- *   tcpip_after_start=0    In TCP mode, run the starter first and send `tcpip:` afterwards.
- *                          EXPERIMENT: restarting adbd may kill the server (cgroup), see verify log.
- *   verify_delay_ms=10000  How long after the start command to log the survival check.
+ * prewarm_key=1         build the AdbKey while waiting for Wi-Fi
+ * fast_toggle=1         write 0 before 1 only if the value is currently 1, no fixed gap
+ * staged_discovery=1    one mDNS discovery for the whole run, short waits (discover_window_ms)
+ * port_scan=1           find the port by scanning loopback (AdbPortScanner), next to mDNS
+ * wifi_settle_ms=0      extra wait after Wi-Fi has an address; raise it if the first toggle fails
+ * discover_window_ms=1400  wait for a port after a toggle before toggling again
+ * fast_reconnect=1      poll the reconnect after `tcpip:` every 200 ms
+ * skip_adb_enabled=0    do not write adb_enabled=1
+ * tcpip_after_start=0   in TCP mode, start the server before restarting adbd
+ * verify_delay_ms=10000 delay of the survival check after the start command
  */
 object BootFlags {
 
@@ -54,12 +33,9 @@ object BootFlags {
         "fast_toggle" to "1",
         "staged_discovery" to "1",
         "wifi_settle_ms" to "0",
-        "discover_window_ms" to "2000",
+        "discover_window_ms" to "1400",
         "fast_reconnect" to "1",
-        "early_mdns" to "0",
         "port_scan" to "1",
-        "rediscover_before_retoggle" to "0",
-        "rediscover_wait_ms" to "700",
         "skip_adb_enabled" to "0",
         "tcpip_after_start" to "0",
         "verify_delay_ms" to "10000",
