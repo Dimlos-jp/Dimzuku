@@ -388,12 +388,13 @@ class DirectBootStartService : Service() {
     private suspend fun discoverStaged(cr: ContentResolver, fast: Boolean): Int {
         val found = Channel<Int>(Channel.CONFLATED)
         val usePortProp = BootFlags.bool("use_tls_port_prop")
-        val mdns = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
+        fun newMdns() = AdbMdns(applicationContext, AdbMdns.TLS_CONNECT) { p ->
             if (p.second > 0) {
                 log("mDNS found host=${p.first} port=${p.second}")
                 found.trySend(p.second)
             }
-        }
+        }.also { it.debug = { msg -> log(msg) } }
+        var mdns = newMdns()
         mdns.start()
         mark("ADB: mDNS discovery started before the toggle")
         try {
@@ -408,6 +409,23 @@ class DirectBootStartService : Service() {
                     return port
                 }
                 log("ADB: no port within ${timeoutMs}ms on attempt ${i + 1}")
+
+                // The first toggle usually DID start adbd (see logcat "adbwifi started"); it is the
+                // discovery that missed it. Restarting the discovery picks up a service that is
+                // already registered, and does not kill the adbd that is listening.
+                if (BootFlags.bool("rediscover_before_retoggle")) {
+                    mark("ADB: restarting mDNS discovery before re-toggling")
+                    mdns.stop()
+                    mdns = newMdns()
+                    mdns.start()
+                    val again = withTimeoutOrNull(BootFlags.int("rediscover_wait_ms").toLong()) {
+                        awaitPort(found, usePortProp)
+                    }
+                    if (again != null) {
+                        mark("ADB: port $again found after restarting the discovery (attempt ${i + 1})")
+                        return again
+                    }
+                }
             }
         } finally {
             mdns.stop()
