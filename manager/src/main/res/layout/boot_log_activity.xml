@@ -9,20 +9,14 @@
     app:fitsSystemWindowsInsets="bottom|start|end"
     app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-    <HorizontalScrollView
+    <TextView
+        android:id="@+id/logText"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
-
-        <TextView
-            android:id="@+id/logText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingHorizontal="@dimen/margin_horizontal"
-            android:paddingVertical="@dimen/margin_vertical"
-            android:fontFamily="monospace"
-            android:textSize="11sp"
-            android:textIsSelectable="true" />
-
-    </HorizontalScrollView>
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="@dimen/margin_horizontal"
+        android:paddingVertical="@dimen/margin_vertical"
+        android:fontFamily="monospace"
+        android:textSize="11sp"
+        android:textIsSelectable="true" />
 
 </androidx.core.widget.NestedScrollView>
