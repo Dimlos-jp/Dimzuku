@@ -2,13 +2,15 @@
 
 ## Supported Versions
 
-Security updates are provided **only** for the following versions of Shizuku:
+Security fixes are provided **only** for the following versions of Dimzuku:
 
 | Version | Supported |
 | ------- | --------- |
-| Latest stable release | ✅* |
-| Latest debug / prerelease | ✅ |
+| Latest commit on the default branch | ✅ |
+| Latest release (if any) | ✅ |
 | Older versions | ❌ |
+
+Vulnerabilities in the upstream Shizuku project should be reported to that project.
 
 Reports affecting unsupported versions may be closed without action.
 
@@ -16,9 +18,9 @@ Reports affecting unsupported versions may be closed without action.
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Shizuku, please report it **privately** and practice responsible disclosure. [See how](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/report-a-vulnerability/privately-reporting-a-security-vulnerability).
+If you discover a security vulnerability in Dimzuku, please report it **privately** and practice responsible disclosure. [See how](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/report-a-vulnerability/privately-reporting-a-security-vulnerability).
 
-Shizuku provides access to **ADB-level and/or root-level privileges**, so security issues may have a high impact.
+Dimzuku, like Shizuku, provides access to **ADB-level and/or root-level privileges**, so security issues may have a high impact.
 
 When reporting a vulnerability, you may include any of the following:
 
@@ -28,7 +30,7 @@ When reporting a vulnerability, you may include any of the following:
 - Proof-of-concept (PoC) code
 - Test applications or scripts demonstrating the issue
 
-Providing detailed information helps us reproduce and fix the issue more efficiently.
+Providing detailed information helps reproduce and fix the issue more efficiently.
 
 ---
 
@@ -36,16 +38,14 @@ Providing detailed information helps us reproduce and fix the issue more efficie
 
 To reduce duplicate reports and false positives, please verify the issue under the following conditions:
 
-1. Confirm the issue reproduces on the **latest stable release**
-2. **When possible, also test on the latest prerelease (debug) build**
-
-If the issue does **not** reproduce on the prerelease build, it may already be fixed.
+Confirm that the issue reproduces on the **latest commit** (or on the latest release, if there is
+one). If it does not, it may already be fixed.
 
 ---
 
 ## Responsible Disclosure
 
-Due to the privileged nature of Shizuku, vulnerabilities may be easily exploitable if disclosed prematurely.
+Due to the privileged nature of Dimzuku, vulnerabilities may be easily exploitable if disclosed prematurely.
 
 Please follow these disclosure guidelines:
 
@@ -60,14 +60,14 @@ This delay allows users adequate time to update and helps reduce the risk of act
 ## What Not to Report
 
 - Issues affecting only unsupported versions
-- Vulnerabilities that require modifying Shizuku itself to be exploitable
+- Vulnerabilities that require modifying Dimzuku itself to be exploitable
 - Reports without any reasonable security impact
 
 ---
 
 ## Bug Bounty
 
-Shizuku does **not** offer a bug bounty or monetary rewards.
+Dimzuku does **not** offer a bug bounty or monetary rewards.
 
 However, **responsible security reporters will be credited in release notes** or other public acknowledgements, at the maintainer's discretion.
 
@@ -75,4 +75,4 @@ However, **responsible security reporters will be credited in release notes** or
 
 ## Acknowledgements
 
-We appreciate the efforts of security researchers and community members who help improve Shizuku's security. Responsible disclosure helps keep users safe and the ecosystem healthy.
+I appreciate the efforts of security researchers and community members who help improve Dimzuku's security. Responsible disclosure helps keep users safe and the ecosystem healthy.
