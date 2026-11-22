@@ -15,8 +15,10 @@ What Dimzuku changes (details and measurements in [DIRECTBOOT_NOTES.md](DIRECTBO
 - Prepares the adb key while waiting for Wi-Fi, polls the reconnect after `tcpip` every 200 ms.
 - A timeline log with `boot+<ms>` marks and experiment flags, both in device-encrypted storage.
 
-Measured on a Pixel 7 (Android 14): the start command finishes at **boot+18.7 to 20.1 s** instead of
-25.1 s; Wi-Fi itself is usable at ~boot+17.6 s, which is the floor.
+Measured on a Pixel 7 (Android 14) on a home router: the start command finishes at **boot+18.7 to
+20.1 s** instead of 25.1 s with the original code. Wi-Fi becoming usable is the floor and depends on
+the device and the network (router ~15-17 s, phone tethering ~11.6 s on a Pixel 10); once Wi-Fi is
+up, the start command needs about 1.5-2 s.
 
 Notes: the application id is still `moe.shizuku.privileged.api` (the server identifies the manager
 by it), so Dimzuku can't be installed next to the official Shizuku. Tested on one device only.

@@ -122,3 +122,14 @@ in the logs the port never showed up on its own between 1.4 s and 2 s.
 Wi-Fi becoming usable (~T+3.4 s after the service starts, ~boot+17.6 s) is the floor; the
 remaining ~1 s is the wait for adbd's port (0.4-1.3 s), TLS connect, tcpip restart and the starter. The server
 was alive (`binder alive`) after every unlock.
+
+### The floor depends on the network
+
+Wi-Fi becoming usable is not under this app's control, so it varies with device and network.
+On a Pixel 10 (Android 17) the same build gave: home router, Wi-Fi at boot+15.3-17.4 s and start
+command finished at boot+17.1-19.3 s (5 runs); phone tethering only (router auto-connect off),
+Wi-Fi at boot+11.7 s and finished at boot+13.7 s (1 run, first toggle succeeded). From Wi-Fi
+available to "start command finished" is 1.5-2 s in both cases. Do not read the router/tether
+difference as a property of the code; why this router is slower was not investigated. A network
+that is not set to "Always allow" for wireless debugging cannot work before unlock (the allow
+prompt needs a tap): that run took 25.5 s here and only succeeded after retries.
