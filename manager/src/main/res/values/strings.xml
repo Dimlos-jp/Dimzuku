@@ -234,6 +234,15 @@
     <string name="about_dialog_button_close">Close</string>
     <string name="about_view_source_code"><![CDATA[View source code at %s]]></string>
 
+    <!-- Boot log -->
+    <string name="boot_log_title">Boot log</string>
+    <string name="boot_log_empty">No boot log yet. It is written at every boot.</string>
+    <string name="boot_log_share">Share</string>
+    <string name="boot_log_copy">Copy</string>
+    <string name="boot_log_clear">Clear log</string>
+    <string name="boot_log_clear_message">Delete the boot log?</string>
+    <string name="boot_log_copied">Copied (addresses and serial number masked)</string>
+
     <!-- Start/Stop -->
      <string name="start">Start</string>
      <string name="stop">Stop</string>

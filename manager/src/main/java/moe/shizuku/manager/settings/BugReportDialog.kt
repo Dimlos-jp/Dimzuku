@@ -43,6 +43,7 @@ class BugReportDialog : DialogFragment() {
             .setPositiveButton("GitHub") { _, _ ->
                 val body = """
                     Please describe the bug. Include steps to reproduce if possible, as well as any relevant images/logs.
+                    If it is about starting at boot, attach the boot log (home menu > Boot log > Share).
 
                     Device: ${Build.MANUFACTURER} ${Build.MODEL}
                     Android Version: ${Build.VERSION.RELEASE}

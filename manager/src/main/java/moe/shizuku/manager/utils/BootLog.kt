@@ -19,7 +19,7 @@ import java.util.Locale
  *
  *     /data/user_de/0/<applicationId>/files/boot_start_log.txt
  *
- * Read it after unlocking with:
+ * After unlocking it can be read in the app (menu > Boot log) or, on debuggable builds, with:
  *     adb shell run-as <applicationId> cat /data/user_de/0/<applicationId>/files/boot_start_log.txt
  *
  * The file is rotated to boot_start_log.old.txt once it passes [MAX_BYTES].
@@ -57,6 +57,33 @@ object BootLog {
 
     /** Value of init.svc.adbd ("running", "stopped", "" if unreadable). */
     fun adbdState(): String = prop("init.svc.adbd")
+
+    /** Last [maxLines] lines of the previous and current log file; empty if there are none. */
+    fun readTail(context: Context, maxLines: Int = 1500): String {
+        val dir = context.createDeviceProtectedStorageContext().filesDir
+        val lines = ArrayList<String>()
+        for (name in listOf(OLD_FILE_NAME, FILE_NAME)) {
+            val f = File(dir, name)
+            if (f.isFile) runCatching { lines.addAll(f.readLines()) }
+        }
+        return lines.takeLast(maxLines).joinToString("\n")
+    }
+
+    fun clear(context: Context) {
+        val dir = context.createDeviceProtectedStorageContext().filesDir
+        File(dir, FILE_NAME).delete()
+        File(dir, OLD_FILE_NAME).delete()
+    }
+
+    private val ipv4 = Regex("\\b(\\d{1,3})\\.(\\d{1,3})\\.\\d{1,3}\\.\\d{1,3}\\b")
+    private val ipv6 = Regex("[0-9a-fA-F:]*::[0-9a-fA-F:]*|(?:[0-9a-fA-F]{1,4}:){5,}[0-9a-fA-F]{1,5}")
+    private val adbService = Regex("adb-[A-Za-z0-9]+-([A-Za-z0-9]+)")
+
+    /** Masks what identifies a device or a home network before the log is shared. */
+    fun redact(text: String): String = text
+        .replace(adbService) { "adb-<serial>-${it.groupValues[1]}" }
+        .replace(ipv4) { "${it.groupValues[1]}.${it.groupValues[2]}.x.x" }
+        .replace(ipv6, "<ipv6>")
 
     fun log(context: Context, msg: String, tr: Throwable? = null) {
         if (tr != null) Log.e(TAG, msg, tr) else Log.i(TAG, msg)

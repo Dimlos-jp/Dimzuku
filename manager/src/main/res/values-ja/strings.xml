@@ -194,6 +194,13 @@
     <string name="dark_theme_on">ダークテーマ</string>
     <string name="follow_system">システム設定に従う</string>
     <!-- About -->
+    <string name="boot_log_title">起動ログ</string>
+    <string name="boot_log_empty">起動ログはまだありません。起動のたびに書き込まれます。</string>
+    <string name="boot_log_share">共有</string>
+    <string name="boot_log_copy">コピー</string>
+    <string name="boot_log_clear">ログを消去</string>
+    <string name="boot_log_clear_message">起動ログを削除しますか?</string>
+    <string name="boot_log_copied">コピーしました(アドレスとシリアル番号は伏せてあります)</string>
     <string name="action_about">このアプリについて</string>
     <string name="about_dialog_button_close">近い</string>
     <string name="about_view_source_code"><![CDATA[%sでソースコードを見る]]></string>

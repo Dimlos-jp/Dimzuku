@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/action_boot_log_share"
+        android:title="@string/boot_log_share"
+        android:showAsAction="never"/>
+
+    <item
+        android:id="@+id/action_boot_log_copy"
+        android:title="@string/boot_log_copy"
+        android:showAsAction="never"/>
+
+    <item
+        android:id="@+id/action_boot_log_clear"
+        android:title="@string/boot_log_clear"
+        android:showAsAction="never"/>
+
+</menu>

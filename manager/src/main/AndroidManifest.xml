@@ -125,6 +125,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".settings.BootLogActivity"
+            android:exported="false"
+            android:label="@string/boot_log_title" />
+        <activity
             android:name=".starter.StarterActivity"
             android:label="@string/starter" />
         <activity

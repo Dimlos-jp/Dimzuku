@@ -27,6 +27,7 @@ import moe.shizuku.manager.databinding.HomeActivityBinding
 import moe.shizuku.manager.home.showAccessibilityDialog
 import moe.shizuku.manager.ktx.toHtml
 import moe.shizuku.manager.management.AppsViewModel
+import moe.shizuku.manager.settings.BootLogActivity
 import moe.shizuku.manager.settings.SettingsActivity
 import moe.shizuku.manager.utils.AppIconCache
 import moe.shizuku.manager.utils.EnvironmentUtils
@@ -238,6 +239,10 @@ abstract class HomeActivity : AppBarActivity() {
                         .setNegativeButton(android.R.string.cancel, null)
                         .show()
                 }
+                true
+            }
+            R.id.action_boot_log -> {
+                startActivity(Intent(this, BootLogActivity::class.java))
                 true
             }
             R.id.action_settings -> {
