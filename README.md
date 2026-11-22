@@ -13,7 +13,7 @@ What Dimzuku changes (details and measurements in [DIRECTBOOT_NOTES.md](DIRECTBO
   mDNS registration is racy right after boot (error -65563) and slow even when it works.
 - Staged discovery: one discovery for the whole run, short waits, a retry only when really needed.
 - Prepares the adb key while waiting for Wi-Fi, polls the reconnect after `tcpip` every 200 ms.
-- A timeline log with `boot+<ms>` marks and experiment flags, both in device-encrypted storage.
+- A boot log with `boot+<ms>` marks that you can read, share and delete in the app (see below).
 
 Measured on a Pixel 7 (Android 14) on a home router: the start command finishes at **boot+18.7 to
 20.1 s** instead of 25.1 s with the original code. Wi-Fi becoming usable is the floor and depends on
@@ -21,7 +21,18 @@ the device and the network (router ~15-17 s, phone tethering ~11.6 s on a Pixel 
 up, the start command needs about 1.5-2 s.
 
 Notes: the application id is still `moe.shizuku.privileged.api` (the server identifies the manager
-by it), so Dimzuku can't be installed next to the official Shizuku. Tested on one device only.
+by it), so Dimzuku can't be installed next to the official Shizuku. Mainly tested on a Pixel 7
+(Android 14); it also worked on a Pixel 10 (Android 17).
+
+## Boot log
+
+Dimzuku keeps a small boot log (timestamps, Wi-Fi and adb state, port numbers) in device-protected
+storage on the phone, so it is written before the first unlock. It is never uploaded. The file is
+rotated at 256 KB.
+
+Open it from the home menu (three dots) > **Boot log**. **Share** and **Copy** mask IP addresses,
+IPv6 addresses and the device serial number; the screen shows the raw log. **Clear log** deletes it.
+If you report a problem with starting at boot, please attach the shared log.
 
 Compared with the versions it builds on:
 
