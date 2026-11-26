@@ -24,6 +24,26 @@ Notes: the application id is still `moe.shizuku.privileged.api` (the server iden
 by it), so Dimzuku can't be installed next to the official Shizuku. Mainly tested on a Pixel 7
 (Android 14); it also worked on a Pixel 10 (Android 17).
 
+## Setup (once)
+
+Dimzuku switches wireless debugging on by itself at boot, and for that it needs the
+`WRITE_SECURE_SETTINGS` permission. Grant it once from a PC over USB debugging:
+
+```
+adb shell pm grant moe.shizuku.privileged.api android.permission.WRITE_SECURE_SETTINGS
+```
+
+You can check it with
+`adb shell dumpsys package moe.shizuku.privileged.api` (look for `WRITE_SECURE_SETTINGS: granted=true`).
+
+Without it nothing starts at boot: the boot log says `ADB: WRITE_SECURE_SETTINGS not granted` and
+the app shows a notification that asks for the permission. The grant stays when you install a new
+build over the old one, but it is lost when you uninstall the app, including when you replace the
+official Shizuku with Dimzuku. Grant it again in that case.
+
+When Android asks whether to allow wireless debugging on your Wi-Fi network, choose "Always
+allow", otherwise the prompt comes back and the start waits for you.
+
 ## Boot log
 
 Dimzuku keeps a small boot log (timestamps, Wi-Fi and adb state, port numbers) in device-protected
