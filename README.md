@@ -26,8 +26,15 @@ by it), so Dimzuku can't be installed next to the official Shizuku. Mainly teste
 
 ## Setup (once)
 
-Dimzuku switches wireless debugging on by itself at boot, and for that it needs the
-`WRITE_SECURE_SETTINGS` permission. Grant it once from a PC over USB debugging:
+Dimzuku switches wireless debugging on by itself at boot, and for that the app needs the
+`WRITE_SECURE_SETTINGS` permission. You normally do not have to do anything: the Shizuku server
+grants it to the app itself once the app has connected to a running server (this is in the server
+code, `attachApplication`, not something Dimzuku added). So start Shizuku once the usual way
+(start via wireless debugging in the app) and the start at boot works from the next reboot. I have
+not tested this on a fresh install myself.
+
+If the permission is missing (for example after a reinstall, before the server has run), grant it
+from a PC over USB debugging, or any other shell-level access:
 
 ```
 adb shell pm grant moe.shizuku.privileged.api android.permission.WRITE_SECURE_SETTINGS
@@ -39,7 +46,7 @@ You can check it with
 Without it nothing starts at boot: the boot log says `ADB: WRITE_SECURE_SETTINGS not granted` and
 the app shows a notification that asks for the permission. The grant stays when you install a new
 build over the old one, but it is lost when you uninstall the app, including when you replace the
-official Shizuku with Dimzuku. Grant it again in that case.
+official Shizuku with Dimzuku. Start the server once again, or grant it again.
 
 When Android asks whether to allow wireless debugging on your Wi-Fi network, choose "Always
 allow", otherwise the prompt comes back and the start waits for you.
