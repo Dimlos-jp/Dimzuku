@@ -164,7 +164,10 @@ class DirectBootStartService : Service() {
 
         when (val mode = ShizukuSettings.getLastLaunchMode()) {
             LaunchMethod.ROOT -> startWithRoot()
-            LaunchMethod.ADB -> startWithAdb()
+            LaunchMethod.ADB -> if (!startWithAdb()) {
+                log("ADB: nothing was started - not waiting for the binder")
+                return
+            }
             else -> {
                 log("no launch mode saved (=$mode) - nothing to do")
                 return
@@ -197,8 +200,12 @@ class DirectBootStartService : Service() {
         log("ROOT: starter exit code ${result.code}")
     }
 
-    /** Step 2: adb, via a fixed TCP port or wireless debugging. */
-    private suspend fun startWithAdb() {
+    /**
+     * Step 2: adb, via a fixed TCP port or wireless debugging.
+     * Returns false when nothing was started (unsupported device or missing WRITE_SECURE_SETTINGS),
+     * so the caller does not log a start or wait for a binder that will not come.
+     */
+    private suspend fun startWithAdb(): Boolean {
         val cr: ContentResolver = contentResolver
 
         val tcpPort = EnvironmentUtils.getAdbTcpPort()
@@ -206,14 +213,14 @@ class DirectBootStartService : Service() {
                 EnvironmentUtils.isTelevision() || tcpPort > 0
         if (!supported) {
             log("ADB: background start not supported on this device (needs Android 11+ or a TCP port)")
-            return
+            return false
         }
 
         if (checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
             != PackageManager.PERMISSION_GRANTED) {
             log("ADB: WRITE_SECURE_SETTINGS not granted")
             ShizukuReceiverStarter.showPermissionErrorNotification(applicationContext)
-            return
+            return false
         }
 
         // prewarm_key: build the AdbKey while waiting for Wi-Fi
@@ -252,6 +259,7 @@ class DirectBootStartService : Service() {
         } finally {
             keyDeferred?.cancel()
         }
+        return true
     }
 
     /** Builds the key and forces the lazy SSLContext / public key. Returns null on any failure. */

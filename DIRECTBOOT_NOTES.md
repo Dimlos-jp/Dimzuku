@@ -135,6 +135,19 @@ comparable, because it only counts boots whose port the ascending scan reached. 
 number or in the upper half would still be missed in the first window and found on the re-toggle
 or by mDNS.
 
+On a Pixel 10 Pro (Android 17, 2026-11-22 to 11-27) the log holds 20 starts before unlock that
+found a port: all 20 ports were odd (34341-46837) and inside the lower half (32769-46883), so the
+order fits Android 17 as well. The last 6 ran with the odd-first scan: all found the port on the
+first attempt, at positions 820-6534 and 0.31-0.76 s after the scan start, and Wi-Fi available to
+start command finished took 0.96-1.67 s. The slowest boot of the log used the old ascending scan:
+port 44693 was above its reach and was found by mDNS only on attempt 5.
+
+On that device `adb_wifi_enabled` can be read and written with WRITE_SECURE_SETTINGS granted, so
+the toggle works. `adb_enabled` always reads 0 although adbd is running, so it seems to be hidden
+from apps and its value says nothing. Without the grant nothing is started: the log says
+`ADB: WRITE_SECURE_SETTINGS not granted`, a notification asks for the permission, and the server is
+not running 10 s later. Grant it once, see the README.
+
 ## Results (Pixel 7, Android 14, boot to "start command finished")
 
 | Version | boot + | Notes |
