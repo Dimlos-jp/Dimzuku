@@ -104,6 +104,14 @@ with an adb CNXN packet (adbd answers STLS). It needs no permission. mDNS stays 
 fallback; whichever reports a port first wins. A failed mDNS registration no longer costs a
 re-toggle.
 
+The scan order is not ascending: every port is still scanned, but the odd ports of the lower
+half of the range (32769-46883) come first, then the other odd ports, then the even ports. adbd
+binds port 0 and the kernel picks the port; BombPerry's notes trace the odd, lower-half choice to
+`inet_csk_find_open_port` (Linux 4.6+). On the Pixel 7, all 18 ports found in one boot log
+(Nov 22-26, 2026) were odd and within 32999-46481. The log line for a hit says its position in
+the order, and each pass logs how far the scan got (`reached N of M`), which shows what the
+scan could not have found in time.
+
 In about one run in three, the first toggle produces no listener at all (0 open ports for 1.4 s);
 the re-toggle then fixes it and costs about 1.5-2 s. Waiting longer than 1.4 s would not help:
 in the logs the port never showed up on its own between 1.4 s and 2 s.

@@ -19,6 +19,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * The TLS server listens on an ephemeral port on all interfaces. Every open loopback port in
  * 32768..60999 is probed with an adb CNXN packet; adbd answers STLS (AUTH / CNXN for a plain adbd).
  *
+ * Scan order ([buildOrder]): every port is still scanned, only the order changes. adbd binds port
+ * 0 and lets the kernel choose; on Linux 4.6+ that gives an odd port from the lower half of the
+ * default ip_local_port_range (BombPerry's notes trace it to inet_csk_find_open_port). On a
+ * Pixel 7 (Android 14) all 18 ports found in one boot log were odd and within 32769..46883. So the
+ * order is: odd ports of the lower half, the other odd ports, then the even ports.
+ *
  * Call [start] right after the toggle and [stop] when done. The first port found is reported once
  * through [onPort].
  */
@@ -26,6 +32,8 @@ class AdbPortScanner(
     private val log: (String) -> Unit,
     private val onPort: (Int) -> Unit,
 ) {
+
+    private val order: IntArray = buildOrder()
 
     @Volatile private var generation = 0
     @Volatile private var hit = false
@@ -51,13 +59,14 @@ class AdbPortScanner(
             while (gen == generation && !hit) {
                 pass++
                 val tp = SystemClock.elapsedRealtime()
-                val next = AtomicInteger(PORT_MIN)
+                val next = AtomicInteger(0)
                 val open = AtomicInteger(0)
                 val tasks = (1..THREADS).map {
                     Callable {
                         while (gen == generation && !hit) {
-                            val p = next.getAndIncrement()
-                            if (p > PORT_MAX) break
+                            val i = next.getAndIncrement()
+                            if (i >= order.size) break
+                            val p = order[i]
                             if (!isOpen(p)) continue
                             open.incrementAndGet()
                             val tOpen = SystemClock.elapsedRealtime()
@@ -65,7 +74,7 @@ class AdbPortScanner(
                             log("scan: open port $p at +${tOpen - t0}ms, probe ${SystemClock.elapsedRealtime() - tOpen}ms ok=$ok")
                             if (ok && gen == generation && !hit) {
                                 hit = true
-                                log("scan: port $p (+${SystemClock.elapsedRealtime() - t0}ms after scan start, pass $pass)")
+                                log("scan: port $p (+${SystemClock.elapsedRealtime() - t0}ms after scan start, pass $pass, position $i of ${order.size})")
                                 onPort(p)
                                 break
                             }
@@ -74,7 +83,7 @@ class AdbPortScanner(
                 }
                 pool.invokeAll(tasks)
                 if (pass == 1 || hit) {
-                    log("scan: pass $pass took ${SystemClock.elapsedRealtime() - tp}ms, open ports in range=${open.get()}")
+                    log("scan: pass $pass took ${SystemClock.elapsedRealtime() - tp}ms, open ports in range=${open.get()}, reached ${minOf(next.get(), order.size)} of ${order.size}")
                 }
                 if (!hit && gen == generation) Thread.sleep(PASS_GAP_MS)
             }
@@ -122,6 +131,30 @@ class AdbPortScanner(
         private val LOOPBACK: InetAddress = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
         private const val PORT_MIN = 32768
         private const val PORT_MAX = 60999
+
+        /**
+         * Scan order, first to last: odd ports of the lower half of the range, the other odd
+         * ports, then the even ports. The lower half is computed the way the kernel does it,
+         * low + (((high + 1 - low) >> 2) << 1), which is 32768..46883 for the default range.
+         * Every port in PORT_MIN..PORT_MAX appears exactly once.
+         */
+        internal fun buildOrder(): IntArray {
+            val out = IntArray(PORT_MAX - PORT_MIN + 1)
+            var n = 0
+            fun add(from: Int, toExclusive: Int, odd: Boolean) {
+                var p = if ((from % 2 == 1) == odd) from else from + 1
+                while (p < toExclusive) {
+                    out[n++] = p
+                    p += 2
+                }
+            }
+            val half = PORT_MIN + (((PORT_MAX + 1 - PORT_MIN) shr 2) shl 1)
+            add(PORT_MIN, half, odd = true)
+            add(half, PORT_MAX + 1, odd = true)
+            add(PORT_MIN, PORT_MAX + 1, odd = false)
+            return out
+        }
+
         private const val THREADS = 64
         private const val CONNECT_TIMEOUT_MS = 300
         private const val PROBE_TIMEOUT_MS = 600
