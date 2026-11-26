@@ -121,12 +121,19 @@ found in the earlier logs were odd and within 32999-46481. The 7058 odd ports of
 take about 1 s, which fits the 1.4 s window. The log line for a hit says its position in the
 order, and each pass logs how far the scan got (`reached N of M`).
 
-First measurement with this order (Pixel 7, 12 boots, 2026-11-26): every boot found the port on
-the first attempt, at positions 281-6778 (all in the lower-half odd tier), including four ports
-above 42600. Time from scan start to the hit: mean 0.63 s, median 0.62 s (before: 0.76 s / 0.87 s).
-Wi-Fi available to start command finished: mean 1.2 s (0.7-1.8 s). This is a short-term
-observation; a port on an even number or in the upper half would still be missed in the first
-window and found on the re-toggle or by mDNS.
+Measurement with this order (Pixel 7, 32 boots started before unlock, 2026-11-26): every boot
+found the port on the first attempt, with no re-toggle and no mDNS fallback. All 32 ports were odd
+(33331-46325) and were found at positions 281-6778, inside the lower-half odd tier. 13 of them were
+above 42600, the range an ascending scan did not reach in time. Time from scan start to the hit:
+mean 0.67 s, median 0.70 s (0.19-1.15 s). Wi-Fi available to start command finished: mean 1.24 s,
+at most 1.78 s. Start finished at boot+18.1-19.9 s (mean 19.2 s), so the boot-to-start time itself
+did not get shorter: Wi-Fi availability (~18 s) is most of it. What changed is that the slow boots
+caused by a re-toggle (1.5-2 s extra, about 3 in 11 before) did not occur.
+
+These are short-term observations on one device. The mean scan time before (0.76 s) is not directly
+comparable, because it only counts boots whose port the ascending scan reached. A port on an even
+number or in the upper half would still be missed in the first window and found on the re-toggle
+or by mDNS.
 
 ## Results (Pixel 7, Android 14, boot to "start command finished")
 
