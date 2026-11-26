@@ -99,22 +99,34 @@ Measured on a Pixel 7 (Android 14), with logcat of adbd and system_server:
 - logcat of other processes is not usable before unlock: even with `READ_LOGS` granted the
   reader got no adbd line (Android asks for log-access consent).
 
-So `AdbPortScanner` connects to every port in 32768-60999 on loopback and probes the open ones
+So `AdbPortScanner` connects to ports in 32768-60999 on loopback (order below) and probes the open ones
 with an adb CNXN packet (adbd answers STLS). It needs no permission. mDNS stays running as a
 fallback; whichever reports a port first wins. A failed mDNS registration no longer costs a
 re-toggle.
 
-The scan order is not ascending: every port is still scanned, but the odd ports of the lower
-half of the range (32769-46883) come first, then the other odd ports, then the even ports. adbd
-binds port 0 and the kernel picks the port; BombPerry's notes trace the odd, lower-half choice to
-`inet_csk_find_open_port` (Linux 4.6+). On the Pixel 7, all 18 ports found in one boot log
-(Nov 22-26, 2026) were odd and within 32999-46481. The log line for a hit says its position in
-the order, and each pass logs how far the scan got (`reached N of M`), which shows what the
-scan could not have found in time.
+Scan speed is about 7000 ports/s (64 threads; a hit at position N shows up at ~0.14 ms x N), so
+one pass over all 28232 ports would take about 4 s. Each attempt only waits
+`discover_window_ms` (1.4 s) before the pass is cut off and the toggle is repeated, so a pass is
+never a full pass. An ascending scan reached only about port 42600 per attempt.
 
-In about one run in three, the first toggle produces no listener at all (0 open ports for 1.4 s);
-the re-toggle then fixes it and costs about 1.5-2 s. Waiting longer than 1.4 s would not help:
-in the logs the port never showed up on its own between 1.4 s and 2 s.
+That is the likely cause of the "first toggle produces no listener" misses seen earlier (3 of 11
+boots, "0 open ports"): adbd had opened a port above ~42600, which the scan did not reach (mDNS
+found such ports only later). All the ports an ascending scan found on the first attempt were
+42027 or lower, and 3/11 matches the share of the lower half above 42600 (~30 %).
+
+So the order is odd ports of the lower half of the range (32769-46883) first, then the other
+odd ports, then the even ports. adbd binds port 0 and the kernel picks the port; BombPerry's
+notes trace the odd, lower-half choice to `inet_csk_find_open_port` (Linux 4.6+). All 18 ports
+found in the earlier logs were odd and within 32999-46481. The 7058 odd ports of the lower half
+take about 1 s, which fits the 1.4 s window. The log line for a hit says its position in the
+order, and each pass logs how far the scan got (`reached N of M`).
+
+First measurement with this order (Pixel 7, 12 boots, 2026-11-26): every boot found the port on
+the first attempt, at positions 281-6778 (all in the lower-half odd tier), including four ports
+above 42600. Time from scan start to the hit: mean 0.63 s, median 0.62 s (before: 0.76 s / 0.87 s).
+Wi-Fi available to start command finished: mean 1.2 s (0.7-1.8 s). This is a short-term
+observation; a port on an even number or in the upper half would still be missed in the first
+window and found on the re-toggle or by mDNS.
 
 ## Results (Pixel 7, Android 14, boot to "start command finished")
 
