@@ -43,7 +43,16 @@ class BootCompleteReceiver : BroadcastReceiver() {
         }
 
         when (val mode = ShizukuSettings.getLastLaunchMode()) {
-            LaunchMethod.ADB, LaunchMethod.ROOT -> DirectBootStartService.start(context)
+            LaunchMethod.ADB, LaunchMethod.ROOT -> {
+                // The reason is already in the log. Before unlock, BOOT_COMPLETED tries again.
+                if (!DirectBootStartService.start(context)) {
+                    if (action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
+                        BootLog.log(context, "[receiver] the start was refused - BOOT_COMPLETED will try again")
+                    } else {
+                        BootLog.log(context, "[receiver] the start was refused - nothing else will retry")
+                    }
+                }
+            }
             else -> BootLog.log(context, "[receiver] skip: no launch mode saved yet (=$mode)")
         }
 

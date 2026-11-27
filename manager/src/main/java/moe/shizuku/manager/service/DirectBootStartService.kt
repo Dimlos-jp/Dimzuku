@@ -108,12 +108,34 @@ class DirectBootStartService : Service() {
         // After unlock: how long to wait for the binder of an already-running server
         private const val ALREADY_RUNNING_WAIT_MS = 6_000L
 
-        fun start(context: Context) {
-            val i = Intent(context, DirectBootStartService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(i)
-            } else {
-                context.startService(i)
+        // From API 37 an app can see 0 for an adb switch that is stored as 1 (read redaction;
+        // active for adb_wifi_enabled on the Android 17 QPR3 betas, not yet on QPR1 stable).
+        // A read is then no proof of the real value, so the toggle does not branch on it there.
+        private val READS_MAY_BE_REDACTED = Build.VERSION.SDK_INT >= 37
+
+        /**
+         * Hands the run over to the service. Returns false, after writing the reason to the boot
+         * log, when the system refuses the foreground-service start (for example
+         * ForegroundServiceStartNotAllowedException on some OEM builds), so that the exception does
+         * not take the boot receiver down with it.
+         *
+         * The guard was inspired by Nightzuku's Direct Boot implementation (kerneldroid/Nightzuku,
+         * commit d03716d3), which catches a rejected startForegroundService() the same way. Here
+         * the only fallback is the second boot broadcast: the receiver tries again at
+         * BOOT_COMPLETED.
+         */
+        fun start(context: Context): Boolean {
+            return try {
+                val i = Intent(context, DirectBootStartService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(i)
+                } else {
+                    context.startService(i)
+                }
+                true
+            } catch (e: Exception) {
+                BootLog.log(context, "[service] the system refused to start the service: ${e.javaClass.simpleName}", e)
+                false
             }
         }
     }
@@ -138,6 +160,7 @@ class DirectBootStartService : Service() {
         runT0 = SystemClock.elapsedRealtime()
         val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         log("==== new run: keyguardLocked=${km.isKeyguardLocked} userUnlocked=${isUserUnlocked()} sdk=${Build.VERSION.SDK_INT}")
+        log("device: ${BootLog.deviceInfo(this)}")
         log("flags: ${BootFlags.reload(this)}")
 
         runJob = scope.launch {
@@ -304,10 +327,16 @@ class DirectBootStartService : Service() {
 
         val scanner = AdbPortScanner({ log(it) }) { p -> found.trySend(p) }
 
-        // A leftover 1 would turn the later write of 1 into a no-op; reset it while waiting for Wi-Fi
-        if (fast && Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
-            Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
-            mark("adb_wifi_enabled was 1, pre-reset to 0")
+        // A leftover 1 would turn the later write of 1 into a no-op; reset it while waiting for Wi-Fi.
+        // Where reads may be redacted the value cannot be trusted, so 0 is written without reading.
+        if (fast) {
+            if (READS_MAY_BE_REDACTED) {
+                Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
+                mark("adb_wifi_enabled: reads may be redacted on API 37+, pre-reset to 0 without reading")
+            } else if (Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
+                Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
+                mark("adb_wifi_enabled was 1, pre-reset to 0")
+            }
         }
 
         val wifiUp = awaitWifi(WIFI_WAIT_MS, waitForIp = fast)
@@ -326,11 +355,19 @@ class DirectBootStartService : Service() {
         }
     }
 
-    /** Makes the framework see a real 0 -> 1 change; with [fast] only if the value is 1 now. */
-    private suspend fun toggleWifiAdb(cr: ContentResolver, fast: Boolean) {
+    /**
+     * Makes the framework see a real 0 -> 1 change; with [fast] only if the value is 1 now.
+     * On a [retry] where reads may be redacted the read is not trusted: 0 then 1 is always written.
+     * (The first attempt relies on the pre-reset instead, and so avoids the extra gap.)
+     */
+    private suspend fun toggleWifiAdb(cr: ContentResolver, fast: Boolean, retry: Boolean) {
         if (!fast) {
             Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
             delay(500)
+        } else if (retry && READS_MAY_BE_REDACTED) {
+            log("toggle: reads may be redacted on API 37+, writing 0 then 1 without reading")
+            Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
+            delay(RETOGGLE_GAP_MS)
         } else if (Settings.Global.getInt(cr, "adb_wifi_enabled", 0) == 1) {
             log("toggle: adb_wifi_enabled is still 1 (framework did not reset it), writing 0 then 1")
             Settings.Global.putInt(cr, "adb_wifi_enabled", 0)
@@ -344,7 +381,7 @@ class DirectBootStartService : Service() {
     /** Original strategy: a new mDNS discovery per attempt, 15 s each. */
     private suspend fun discoverLegacy(cr: ContentResolver, fast: Boolean, wifiUp: Boolean): Int {
         for (attempt in 1..MAX_ATTEMPTS) {
-            toggleWifiAdb(cr, fast)
+            toggleWifiAdb(cr, fast, retry = attempt > 1)
             mark("ADB: adb_wifi_enabled 0->1 (attempt $attempt/$MAX_ATTEMPTS), mDNS discovery (${DISCOVER_TIMEOUT_MS / 1000}s)")
             try {
                 return discoverPort(DISCOVER_TIMEOUT_MS)
@@ -375,7 +412,7 @@ class DirectBootStartService : Service() {
             val stages = stagedTimeoutsMs()
             for ((i, timeoutMs) in stages.withIndex()) {
                 found.tryReceive() // drop a stale port from before this toggle
-                toggleWifiAdb(cr, fast)
+                toggleWifiAdb(cr, fast, retry = i > 0)
                 if (useScan) scanner.start()
                 mark("ADB: adb_wifi_enabled=1 (attempt ${i + 1}/${stages.size}), waiting ${timeoutMs}ms")
                 val port = withTimeoutOrNull(timeoutMs) { found.receive() }

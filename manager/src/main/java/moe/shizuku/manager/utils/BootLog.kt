@@ -1,6 +1,8 @@
 package moe.shizuku.manager.utils
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import android.os.SystemProperties
 import android.provider.Settings
@@ -9,6 +11,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import moe.shizuku.manager.BuildConfig
 
 /**
  * Small boot-start log shared by [moe.shizuku.manager.receiver.BootCompleteReceiver] and
@@ -53,6 +56,20 @@ object BootLog {
                 " adb_wifi_enabled=${g("adb_wifi_enabled")}" +
                 " init.svc.adbd='${prop("init.svc.adbd")}'" +
                 " tcp_port='${prop("service.adb.tcp.port")}'"
+    }
+
+    /**
+     * One line that identifies the build under test: device, full build fingerprint, security
+     * patch, app version, target SDK and whether WRITE_SECURE_SETTINGS is granted. It is what a
+     * report about a boot result should carry. Nothing in it identifies the owner.
+     */
+    fun deviceInfo(context: Context): String {
+        val granted = context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==
+                PackageManager.PERMISSION_GRANTED
+        return "model=${Build.MODEL} fingerprint=${Build.FINGERPRINT}" +
+                " security_patch=${Build.VERSION.SECURITY_PATCH} sdk=${Build.VERSION.SDK_INT}" +
+                " app=${BuildConfig.VERSION_NAME} targetSdk=${context.applicationInfo.targetSdkVersion}" +
+                " WRITE_SECURE_SETTINGS=$granted"
     }
 
     /** Value of init.svc.adbd ("running", "stopped", "" if unreadable). */

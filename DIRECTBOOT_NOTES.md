@@ -148,6 +148,28 @@ from apps and its value says nothing. Without the grant nothing is started: the 
 `ADB: WRITE_SECURE_SETTINGS not granted`, a notification asks for the permission, and the server is
 not running 10 s later. Grant it once, see the README.
 
+## Android 17 notes, and what 13.7.0-dimzuku.3 changes
+
+- **Reads of the adb switches.** On Android 17 the Settings provider can return `0` to ordinary
+  apps for `adb_enabled` and `adb_wifi_enabled`. kerneldroid's
+  [Android 17 GSI audit](https://github.com/kerneldroid/Nightzuku/tree/dev/docs/android17)
+  (a static comparison of 16 images, no GSI boot verified) found `adb_enabled` redacted on most
+  builds and `adb_wifi_enabled` redacted on QPR3 Beta 1 and Beta 4. On the Pixel 10 Pro used here
+  (`CP3A.261005.005`, the QPR1 stable line) `adb_wifi_enabled` can still be read and `adb_enabled`
+  always reads 0. Where a read cannot be trusted, the toggle should not branch on it: from API 37
+  the pre-reset always writes 0, and a retry always writes 0 then 1 instead of first checking for
+  a leftover 1. The first attempt is unchanged. Writing needs `WRITE_SECURE_SETTINGS` only: on the
+  Pixel 10 Pro `dumpsys package` shows `MANAGE_DEBUGGING` neither requested nor granted.
+- **A refused foreground-service start.** `DirectBootStartService.start()` now catches the
+  exception (for example `ForegroundServiceStartNotAllowedException` on some OEM builds), writes
+  the reason to the boot log, and the receiver tries again at `BOOT_COMPLETED`. This guard was
+  inspired by Nightzuku's Direct Boot implementation (kerneldroid/Nightzuku, commit `d03716d3`),
+  which guards the same call. The exception has not been seen on the test devices, so this path
+  is untested.
+- **A `device:` line.** Each run logs the model, full build fingerprint, security patch, SDK, app
+  version, target SDK and whether `WRITE_SECURE_SETTINGS` is granted, so a report about a boot
+  result carries the build it was measured on.
+
 ## Results (Pixel 7, Android 14, boot to "start command finished")
 
 | Version | boot + | Notes |
